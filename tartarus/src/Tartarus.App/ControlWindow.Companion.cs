@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
+using Tartarus.Vision;
 
 namespace Tartarus.App;
 
@@ -12,7 +13,9 @@ public partial class ControlWindow
 {
     private Process? _vorax;
     private bool _companionReady;
-    private readonly DispatcherTimer _companionTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
+    private GameContent _activeContent;
+    private bool _gameAvailable;
+    private readonly DispatcherTimer _companionTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private DateTime _voraxStatusTime;
     private static string VoraxData => Path.Combine(AppContext.BaseDirectory, "user-data", "vorax");
     private static bool PreviewMode => Environment.GetCommandLineArgs().Contains("--preview-ui");
@@ -27,9 +30,18 @@ public partial class ControlWindow
         VoraxCpuCombo.Items.Add($"추천 속도 우선 / {CpuThreads(2)}개 스레드");
         VoraxCpuCombo.SelectedIndex = Math.Clamp(_settings.VoraxCpuMode, 0, 2);
         _settings.VoraxThreads = CpuThreads(VoraxCpuCombo.SelectedIndex);
-        _companionTimer.Tick += (_, _) => ReadVoraxStatus();
+        AutoContentCheck.IsChecked = _settings.AutoDetectContent;
+        _companionTimer.Tick += (_, _) => { UpdateAutomaticContent(); ReadVoraxStatus(); };
         _companionTimer.Start();
-        Loaded += (_, _) => _companionReady = true;
+        Loaded += (_, _) =>
+        {
+            _companionReady = true;
+            if (PreviewMode) return;
+            AutoScanCheck.IsChecked = false;
+            AutoAttachCheck.IsChecked = false;
+            if (_settings.AutoDetectContent) TryAutoAttach();
+            else ActivateContent(ModeTabs.SelectedIndex == 1 ? GameContent.Vorax : GameContent.Tartarus);
+        };
         if (PreviewMode) AutoAttachCheck.IsChecked = false;
     }
 
@@ -61,20 +73,64 @@ public partial class ControlWindow
     private void ModeTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_companionReady || e.Source != ModeTabs || PreviewMode) return;
-        if (ModeTabs.SelectedIndex == 1)
+        // In automatic mode tabs are settings pages; viewing one must not change the running engine.
+        if (!_settings.AutoDetectContent)
+            ActivateContent(ModeTabs.SelectedIndex == 1 ? GameContent.Vorax : GameContent.Tartarus);
+    }
+
+    private void AutoContent_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!_companionReady || PreviewMode) return;
+        _settings.AutoDetectContent = AutoContentCheck.IsChecked == true;
+        _settings.Save();
+        if (_settings.AutoDetectContent) TryAutoAttach();
+        else ActivateContent(ModeTabs.SelectedIndex == 1 ? GameContent.Vorax : GameContent.Tartarus);
+        ShowContentStatus();
+    }
+
+    private void UpdateAutomaticContent()
+    {
+        if (!_companionReady || PreviewMode || !_settings.AutoDetectContent) return;
+        ActivateContent(_gameAvailable ? _gameLog?.Content ?? GameContent.None : GameContent.None);
+        ShowContentStatus();
+    }
+
+    private void ShowContentStatus()
+    {
+        string name = _activeContent switch { GameContent.Tartarus => "타르타로스", GameContent.Vorax => "블러드 러스트", _ => "대기" };
+        ContentStatus.Text = _settings.AutoDetectContent
+            ? $"자동 감지: {name}" + (_activeContent == GameContent.None ? " / 게임 로그를 켜고 콘텐츠에 입장하세요." : " / 탭은 설정 보기용입니다.")
+            : $"수동 선택: {name} / 탭을 바꾸면 전환됩니다.";
+    }
+
+    private void ActivateContent(GameContent content)
+    {
+        if (_activeContent == content) return;
+        _activeContent = content;
+        AutoScanCheck.IsChecked = false;
+        AutoAttachCheck.IsChecked = false;
+        _hints.Clear();
+        ClearHint();
+        StopCapture();
+        StopVorax();
+        _frame = null;
+        _scan = null;
+        _sandbox = _scannedSandbox = _lastRead = null;
+        RefreshOverlay();
+        if (_settings.AutoDetectContent && content != GameContent.None)
+            ModeTabs.SelectedIndex = content == GameContent.Vorax ? 1 : 0;
+        if (content == GameContent.Vorax)
         {
-            AutoScanCheck.IsChecked = false;
-            AutoAttachCheck.IsChecked = false;
-            StopCapture();
             StartVorax();
         }
-        else
+        else if (content == GameContent.Tartarus)
         {
-            StopVorax();
             AutoAttachCheck.IsChecked = true;
             AutoScanCheck.IsChecked = true;
             TryAutoAttach();
         }
+        Log($"Content engine: {content} (automatic={_settings.AutoDetectContent})");
+        ShowContentStatus();
     }
 
     private void CompanionSetting_Changed(object sender, SelectionChangedEventArgs e)
@@ -87,7 +143,7 @@ public partial class ControlWindow
         _settings.VoraxThreads = CpuThreads(_settings.VoraxCpuMode);
         _settings.Save();
         CheckGameLanguage();
-        if (ModeTabs.SelectedIndex == 1 && _vorax is { HasExited: false })
+        if (_activeContent == GameContent.Vorax && _vorax is { HasExited: false })
         {
             StopVorax();
             StartVorax();
@@ -181,6 +237,7 @@ public partial class ControlWindow
 
     private void VoraxSnap_Click(object sender, RoutedEventArgs e)
     {
+        if (_activeContent != GameContent.Vorax) return;
         StartVorax();
         if (_vorax is { HasExited: false })
             File.WriteAllText(Path.Combine(VoraxData, "command.txt"), "scan", new UTF8Encoding(false));
@@ -188,6 +245,7 @@ public partial class ControlWindow
 
     private void VoraxToggle_Click(object sender, RoutedEventArgs e)
     {
+        if (_activeContent != GameContent.Vorax) return;
         if (_vorax is { HasExited: false }) StopVorax(); else StartVorax();
     }
 

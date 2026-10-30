@@ -49,6 +49,7 @@ public sealed class AppSettings
     /// <summary>The game's language for OCR (en, ru, de, ..., zhCN); null: read from the game's GameUserSettings.ini.</summary>
     public string? GameLanguage { get; set; } = "ko";
     public int ShelleyLevel { get; set; } = 0;
+    public bool AutoDetectContent { get; set; } = true;
     public int VoraxFutures { get; set; } = 1024;
     public int VoraxCpuMode { get; set; } = 1;
     public int VoraxThreads { get; set; } = Math.Clamp(Environment.ProcessorCount / 2, 1, 8);

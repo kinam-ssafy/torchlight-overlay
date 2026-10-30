@@ -54,6 +54,7 @@ public partial class ControlWindow : Window
         _hints.Log += line => Dispatcher.BeginInvoke(() => Log("Hint: " + line));
         _hints.Ready += hint => Dispatcher.BeginInvoke(() =>
         {
+            if (_activeContent != GameContent.Tartarus) return;
             var best = hint.Shown.Count > 0 ? hint.Shown[0] : null;
             Tartarus.Rules.GameAction? before = _hint?.Shown is { Count: > 0 } prev ? prev[0].Action : null;
             if (best != null && before != best.Action)
@@ -93,7 +94,7 @@ public partial class ControlWindow : Window
         // and bug reports.
         if (!settings.Debug)
             foreach (var panel in new FrameworkElement[] { ViewPanel, HintsCheck, HintsOnlyCheck, DebugPanel }) panel.Visibility = Visibility.Collapsed;
-        VersionText.Text = "KO 1.0 / 원본 " + AppVersion.Short;
+        VersionText.Text = "KO 1.0.1 / 원본 " + AppVersion.Short;
         VersionText.ToolTip = AppVersion.Full;
         Log("Version " + AppVersion.Short + (BugReports.Enabled ? "" : " · bug reports not set up"));
 
@@ -163,6 +164,8 @@ public partial class ControlWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        _companionReady = false;
+        _activeContent = GameContent.None;
         _settings.ControlLeft = Left;
         _settings.ControlTop = Top;
         _settings.Save();
@@ -244,6 +247,15 @@ public partial class ControlWindow : Window
 
     private void TryAutoAttach()
     {
+        if (!_companionReady || PreviewMode) return;
+        if (_settings.AutoDetectContent)
+        {
+            var detected = Win32Windows.FindGame(new Regex(_settings.WindowTitle));
+            _gameAvailable = detected is { } window && window.Hwnd != IntPtr.Zero;
+            if (detected is { } found && Win32Windows.ImagePath(found.Pid) is { } exe) StartGameLog(exe);
+            UpdateAutomaticContent();
+        }
+        if (_activeContent != GameContent.Tartarus) return;
         CheckGameLanguage();
         if (_capture != null || AutoAttachCheck.IsChecked != true) return;
         var pattern = new Regex(_settings.WindowTitle);
@@ -291,6 +303,7 @@ public partial class ControlWindow : Window
 
     private void CaptureButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_activeContent != GameContent.Tartarus) return;
         if (_capture != null)
         {
             // Stopping by hand also stops re-attaching, or the game would be picked up again in 2 s.
@@ -413,6 +426,7 @@ public partial class ControlWindow : Window
 
     private async Task<bool> ScanAsync(bool manual)
     {
+        if (_activeContent != GameContent.Tartarus) return false;
         if (_capture == null)
         {
             if (manual) ScanStatus.Text = "게임 창을 먼저 연결하세요.";
@@ -439,7 +453,7 @@ public partial class ControlWindow : Window
             Log("Scan error: " + ex.Message);
             return false;
         }
-        if (_editMode && !manual) return false;
+        if (capture != _capture || _activeContent != GameContent.Tartarus || (_editMode && !manual)) return false;
         if (manual && _sandbox?.AnyEdited == true && !_savedSinceScan) Log("Unsaved edits replaced by a new scan");
 
         // Cells a tooltip covers keep what the last scan of the same Sandbox read there. Only a Sandbox read whole is

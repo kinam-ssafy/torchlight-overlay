@@ -77,6 +77,9 @@
           <ComboBoxItem Content="한국어"/><ComboBoxItem Content="English"/>
         </ComboBox>
       </DockPanel>
+      <CheckBox x:Name="AutoContentCheck" Content="콘텐츠 자동 감지" Margin="0,12,0,0" Checked="AutoContent_Changed" Unchecked="AutoContent_Changed"
+                ToolTip="게임 로그에서 콘텐츠를 감지해 자동으로 전환합니다. 끄면 탭으로 직접 선택합니다." />
+      <TextBlock x:Name="ContentStatus" Text="자동 감지 대기" Foreground="#83E0C8" FontSize="12" Margin="0,6,0,0" TextWrapping="Wrap" />
     </StackPanel>
     <TextBlock DockPanel.Dock="Bottom" Margin="0,14,0,0" Text="추천 표시는 클릭을 통과합니다. 선택과 확인은 직접 진행하세요." Foreground="#97A9BF" FontSize="11" TextWrapping="Wrap" />
     <TabControl x:Name="ModeTabs" Background="#172130" BorderBrush="#304058" SelectionChanged="ModeTabs_SelectionChanged">

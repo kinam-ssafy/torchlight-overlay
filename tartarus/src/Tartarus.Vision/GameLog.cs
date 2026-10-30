@@ -301,13 +301,16 @@ public sealed class GameLogWatcher : IDisposable
     private readonly System.Text.Decoder _decoder = System.Text.Encoding.UTF8.GetDecoder();
     private long _position;
     private string _partial = "";
+    private readonly ContentDetector _contentDetector = new();
+    private volatile GameContent _content;
+    public GameContent Content => _content;
 
     /// <summary>Reads the log from its start (the run going on, even one begun before the app), then follows it.</summary>
     public GameLogWatcher(string path, GameLog? log = null)
     {
         _path = path;
         Log = log ?? new GameLog();
-        _timer = new Timer(_ => Poll(), null, 0, 500);
+        _timer = new Timer(_ => Poll(), null, 0, 250);
     }
 
     public GameLog Log { get; }
@@ -321,7 +324,13 @@ public sealed class GameLogWatcher : IDisposable
         try
         {
             var info = new FileInfo(_path);
-            if (info.Length < _position) (_position, _partial) = (0, ""); // a new log
+            if (info.Length < _position)
+            {
+                (_position, _partial) = (0, ""); // a new log
+                _decoder.Reset();
+                _contentDetector.Reset();
+                _content = GameContent.None;
+            }
             if (info.Length == _position) return;
             using var stream = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             stream.Seek(_position, SeekOrigin.Begin);
@@ -338,12 +347,21 @@ public sealed class GameLogWatcher : IDisposable
                 if (end < 0) continue;
                 lock (Log)
                     foreach (var line in text[..end].Split('\n'))
+                    {
                         changed |= Log.Feed(line);
+                        _contentDetector.Feed(line);
+                    }
             }
+            // Publish once after replay: old sessions must not start engines along the way.
+            _content = _contentDetector.Current;
             if (changed && Log.Current is { } run) Changed?.Invoke(run);
         }
         catch (IOException)
         {
+            (_position, _partial) = (0, "");
+            _decoder.Reset();
+            _contentDetector.Reset();
+            _content = GameContent.None;
         }
         finally
         {
