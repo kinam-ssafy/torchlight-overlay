@@ -30,13 +30,14 @@ pub fn futures() -> u32 {
 pub fn trustworthy(reading: &Reading) -> bool {
     !reading.has(|p| matches!(p, Problem::Unreadable { .. } | Problem::UnknownArt { .. } | Problem::UnknownName { .. }))
         && !reading.state.hand.is_empty()
+        && (0..reading.state.hand.len()).all(|i| reading.fields.get(&format!("hand{i}")).is_some_and(|f| f.sure))
         && (reading.state.phase == vorax::advisor::ScreenPhase::Protocol || reading.fields.get("refreshes").is_some_and(|f| f.sure))
 }
 
 pub enum Outcome {
     /// not the Surgical Preparation screen
     NotGame,
-    Uncertain,
+    Uncertain { reading: Box<Reading> },
     /// a card flying off as it's played: the last advice still stands
     Animating,
     /// the game closing after round 13's last pick (its end animation, the rewards): not a board
@@ -176,7 +177,7 @@ impl Pipeline {
         reading.state.shelley = Some(self.shelley);
         self.fill_rerolls(&mut reading);
         let read_ms = t.elapsed().as_secs_f64() * 1000.0;
-        if !trustworthy(&reading) { return Outcome::Uncertain; }
+        if !trustworthy(&reading) { return Outcome::Uncertain { reading: Box::new(reading) }; }
         let (advice, cached) = self.advise(&reading.state);
         let l = layout_at(img.width, img.height, reading.ui()).shifted_hand(reading.hand_dy.unwrap_or(0.0));
         self.card_frames = crate::card_frame::detect(&img, &l, reading.state.hand.len());
@@ -298,6 +299,35 @@ mod tests {
         assert_eq!(read.state.hand, ["Hypertrophic Pituitary", "Prismatic Liver", "Contracted Claws"]);
         assert!(!read.has(|p| matches!(p, Problem::UnknownArt { .. })));
         assert!(text.next().is_none());
+    }
+
+    #[test]
+    fn first_instrument_then_blue_potion_keeps_recommending() {
+        use super::*;
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames");
+        let instrument = decode_png(&root.join("board-1080p.png")).unwrap();
+        let potion = decode_png(&root.join("potion-ko-1080p.png")).unwrap();
+        let mut pipe = Pipeline::new(5);
+        assert!(matches!(pipe.run(&instrument, Some("screen"), None), Outcome::Advice { .. }));
+        // Observed Windows Korean OCR results: gold mask, adaptive crop, stronger adaptive crop.
+        let mut titles = ["1 그를 몬스터를 선택 그 우측의 몬스터를", "끄入4하 다즈 요에", "끈적한 담즙 용액", "허물 용액", "종기 치료 연고"].into_iter();
+        let mut read = |_: &Img| titles.next().expect("bounded title retries").to_owned();
+        let Outcome::Advice { reading, .. } = pipe.run(&potion, Some("board"), Some(&mut read)) else { panic!("potion advice after instrument pick") };
+        assert_eq!(reading.state.hand, ["Viscous Bile Solution", "Slough Solution", "Cleansing Ointment"]);
+        assert_eq!(reading.state.instruments, ["Contracted Claws"]);
+        assert_eq!(reading.state.round, Some(1));
+        assert_eq!(reading.state.potion_refreshes, Some(3));
+        assert!(titles.next().is_none());
+    }
+
+    #[test]
+    fn ambiguous_card_guess_is_not_actionable() {
+        use super::*;
+        let frame = decode_png(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames/board-1080p.png")).unwrap();
+        let mut reading = scan(&frame, scan_data(), true);
+        reading.problems.clear();
+        reading.fields.get_mut("hand0").unwrap().sure = false;
+        assert!(!trustworthy(&reading));
     }
 
     #[test]

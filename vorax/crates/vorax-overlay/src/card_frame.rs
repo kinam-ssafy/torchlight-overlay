@@ -1,4 +1,4 @@
-//! Fit the visible gold card edges. Localized cards have different widths and spacing, so an OCR
+//! Fit the visible gold or blue card edges. Localized cards have different widths and spacing, so an OCR
 //! crop is not a reliable rectangle to draw. Searches are bounded to the already detected hand.
 use vorax_scan::{layout::{CardPos, Layout}, pixels::Img};
 
@@ -8,7 +8,8 @@ fn gold_pixel(img: &Img, x: f64, y: f64) -> bool {
     let (x, y) = (x.round() as isize, y.round() as isize);
     if x < 0 || y < 0 || x >= img.width as isize || y >= img.height as isize { return false; }
     let (r, g, b) = img.px(x as usize, y as usize);
-    r >= 150 && g >= 85 && g <= 240 && b < 210 && r as i32 - g as i32 >= 15 && g as i32 - b as i32 >= 25
+    (r >= 150 && g >= 85 && g <= 240 && b < 210 && r as i32 - g as i32 >= 15 && g as i32 - b as i32 >= 25)
+        || (b >= 100 && g >= 65 && b >= g && b as i32 - r as i32 >= 35)
 }
 
 fn gold(img: &Img, x: f64, y: f64) -> bool {
@@ -78,6 +79,16 @@ mod tests {
     fn no_outline_is_invented_on_a_blank_screen() {
         let img = Img::new(1920, 1080);
         assert!(detect(&img, &vorax_scan::layout::layout(1920, 1080), 3).is_none());
+    }
+
+    #[test]
+    fn korean_potion_fan_with_a_blue_card_has_all_three_outlines() {
+        let frame = crate::pipeline::decode_png(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames/potion-ko-1080p.png")).unwrap();
+        let fitted = detect(&frame, &vorax_scan::layout::layout(1920, 1080), 3).expect("blue and gold card edges");
+        for ((c, w, h), (x, y)) in fitted.iter().zip([(889.0, 825.0), (1077.0, 819.0), (1265.0, 825.0)]) {
+            assert!((c.cx - x).abs() < 7.0 && (c.cy - y).abs() < 7.0, "card center: {c:?}");
+            assert!((w - 224.0).abs() < 10.0 && (h - 300.0).abs() < 10.0);
+        }
     }
 
     #[test]

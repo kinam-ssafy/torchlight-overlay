@@ -21,10 +21,15 @@ pub struct Options {
 
 /// How long after a pick the board is looked at again, for the new icon to have landed in the panel.
 const RELOOK: Duration = Duration::from_millis(1500);
-/// A card still in flight: the board is looked at again this much later, this many times, before its marks are
-/// hidden (the board they were for is gone, and no log line may come to say when the new one has landed).
+/// Retry quickly through animations, then slowly until the unread board becomes legible.
+/// No new log event is required when a covering window or a long effect disappears.
 const RETRY: Duration = Duration::from_millis(700);
 const RETRIES: u32 = 3;
+const SLOW_RETRY: Duration = Duration::from_secs(3);
+
+fn retry_delay(attempts: u32) -> Duration {
+    if attempts < RETRIES { RETRY } else { SLOW_RETRY }
+}
 
 /// A line the game writes only with its log on (Esc → Account Related → Enable Log): with it on, one comes at
 /// least every ~10 s (pings, sounds, clicks); with it off, only a few as the game starts.
@@ -133,6 +138,7 @@ pub fn run(opts: Options, tx: Sender<ToUi>, waker: Waker, rx: Receiver<ToWorker>
                 status("수술 준비 화면 대기", "다음 화면을 기다립니다.", "보드 닫힘");
                 send(ToUi::Clear);
                 retry = None;
+                relook_at = None;
             }
             was_over = settler.over;
         }
@@ -175,16 +181,15 @@ pub fn run(opts: Options, tx: Sender<ToUi>, waker: Waker, rx: Receiver<ToWorker>
             // the look again after a pick, to settle the new icon: the board hasn't changed, so the marks stay up
             // while it reads and only change if what it finds does
             let quiet = relook && due.is_none() && !manual && again.is_none();
-            let animating = read(&capturer, ocr.as_ref(), &mut pipe, trigger, manual || relook, quiet, opts.frames.as_deref(), &send);
-            if !animating || quiet {
+            let unread = read(&capturer, ocr.as_ref(), &mut pipe, trigger, manual || relook, quiet, opts.frames.as_deref(), &send);
+            if !unread {
                 retries = 0;
-            } else if retries < RETRIES {
-                retries += 1;
-                retry = Some((Instant::now() + RETRY, trigger));
             } else {
-                retries = 0;
-                note(&format!("still a card in flight after {RETRIES} more looks: the marks are hidden until the next board"));
-                send(ToUi::Clear);
+                retry = Some((Instant::now() + retry_delay(retries), trigger));
+                retries = retries.saturating_add(1);
+                if retries == RETRIES + 1 {
+                    note("board still unreadable: keeping marks hidden and retrying every 3 seconds");
+                }
             }
             if pipe.wants_relook() {
                 relook_at = Some(Instant::now() + RELOOK);
@@ -207,7 +212,7 @@ fn last_game_line_age(path: &Path) -> Option<Duration> {
     Some(Duration::from_millis((now - at).max(0.0) as u64))
 }
 
-/// Takes a picture, reads it and advises; true when a card was in flight (nothing read).
+/// Takes a picture, reads it and advises; true when the board needs another read.
 #[allow(clippy::too_many_arguments)]
 fn read(capturer: &Capturer, ocr: Option<&Ocr>, pipe: &mut Pipeline, trigger: Option<&str>, now: bool, quiet: bool, frames: Option<&Path>, send: &dyn Fn(ToUi)) -> bool {
     let Some(game) = find_game_window() else {
@@ -248,10 +253,10 @@ fn read(capturer: &Capturer, ocr: Option<&Ocr>, pipe: &mut Pipeline, trigger: Op
         Outcome::Advice { .. } => "board",
         Outcome::Animating => "animating",
         Outcome::NotGame => "notgame",
-        Outcome::Uncertain => "uncertain",
+        Outcome::Uncertain { .. } => "uncertain",
         Outcome::Closing => "closing",
     };
-    let animating = matches!(outcome, Outcome::Animating | Outcome::Uncertain);
+    let animating = matches!(outcome, Outcome::Animating | Outcome::Uncertain { .. });
     match outcome {
         Outcome::Advice { reading, advice, plan, read_ms, cached } => {
             let title = plan.pill.as_ref().map_or("추천 없음", |p| p.main.as_str());
@@ -272,8 +277,10 @@ fn read(capturer: &Capturer, ocr: Option<&Ocr>, pipe: &mut Pipeline, trigger: Op
         }
         // the board changed and a card is still moving: the marks stay hidden (the pill dimmed) while it looks again,
         // rather than the old ones blinking back between looks (2-3 flashes while long effects play out)
-        Outcome::Uncertain => {
-            status("인식 확인 필요", "카드나 수치를 확실히 읽지 못했습니다. 화면을 가린 창을 치우고 다시 인식하세요.", "추천 보류");
+        Outcome::Uncertain { reading } => {
+            let fields: Vec<_> = reading.fields.iter().filter(|(k, f)| !f.sure && (k.starts_with("hand") || *k == "refreshes" || *k == "round" || k.starts_with("tank"))).map(|(k, _)| k.as_str()).collect();
+            note(&format!("unread board: fields {fields:?}; problems {:?}", reading.problems));
+            status("인식 재시도 중", "카드나 수치를 확인하고 있습니다. 화면이 선명해지면 자동으로 다시 추천합니다.", "추천 보류 / 자동 재시도");
             send(ToUi::Clear);
         }
         Outcome::Animating => {
@@ -306,4 +313,16 @@ fn read(capturer: &Capturer, ocr: Option<&Ocr>, pipe: &mut Pipeline, trigger: Op
 fn status(title: &str, detail: &str, state: &str) {
     let data = serde_json::json!({ "title": title, "detail": detail, "status": state });
     let _ = std::fs::write(super::sys::data_dir().join("status.json"), data.to_string());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unread_boards_keep_retrying_at_a_bounded_rate() {
+        let delays: Vec<_> = (0..6).map(retry_delay).collect();
+        assert_eq!(delays, [RETRY, RETRY, RETRY, SLOW_RETRY, SLOW_RETRY, SLOW_RETRY]);
+        assert_eq!(retry_delay(u32::MAX), SLOW_RETRY);
+    }
 }

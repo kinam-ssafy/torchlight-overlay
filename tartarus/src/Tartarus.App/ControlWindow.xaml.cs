@@ -94,7 +94,7 @@ public partial class ControlWindow : Window
         // and bug reports.
         if (!settings.Debug)
             foreach (var panel in new FrameworkElement[] { ViewPanel, HintsCheck, HintsOnlyCheck, DebugPanel }) panel.Visibility = Visibility.Collapsed;
-        VersionText.Text = "KO 1.0.1 / 원본 " + AppVersion.Short;
+        VersionText.Text = "KO 1.0.2 / 원본 " + AppVersion.Short;
         VersionText.ToolTip = AppVersion.Full;
         Log("Version " + AppVersion.Short + (BugReports.Enabled ? "" : " · bug reports not set up"));
 

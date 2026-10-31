@@ -173,8 +173,18 @@ pub fn read_titles_styled(img: &Img, reading: Reading, data: &ScanData, read_tex
     let texts: Vec<String> = l.hand_at(size).iter().map(|c| {
         let text = read_text(&if gold_first { title_crop_gold(img, c, l.k, 70) } else { title_crop(img, c, l.k) });
         if (gold_first || text.chars().any(crate::korean::hangul)) && !phases.iter().any(|phase| settled(&ranked(data, phase, &text))) {
-            let other = read_text(&if gold_first { title_crop(img, c, l.k) } else { title_crop_gold(img, c, l.k, 70) });
+            let adaptive = title_crop(img, c, l.k);
+            let other = read_text(&if gold_first { adaptive.clone() } else { title_crop_gold(img, c, l.k, 70) });
             if phases.iter().any(|phase| settled(&ranked(data, phase, &other))) { return other; }
+            // Blue potion cards have pale headings on a blue background: the gold mask loses
+            // them, and the adaptive crop alone leaves Hangul strokes too faint for Windows OCR.
+            let mut strong = adaptive;
+            for p in strong.data.chunks_exact_mut(4) {
+                let v = 255u8.saturating_sub((255 - p[0]).saturating_mul(2));
+                p[0] = v; p[1] = v; p[2] = v;
+            }
+            let stronger = read_text(&strong);
+            if phases.iter().any(|phase| settled(&ranked(data, phase, &stronger))) { return stronger; }
         }
         text
     }).collect();
