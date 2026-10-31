@@ -147,14 +147,16 @@ pub fn scan_with(captured: &Img, data: &ScanData, pictures: bool, hand_dy: Optio
     // Localized counters extend above the original band. Keep its bottom fixed so the activity
     // label below cannot become a digit, and keep the denominator outside the right edge.
     let mut round = read_text(img, &g, &l.round, TextKind::Round, &data.digits["round"]);
-    if !upstream && round.as_ref().is_none_or(|r| r.score < DIGIT_MIN
-        || r.text.parse::<u32>().map_or(true, |n| !(1..=13).contains(&n))) {
+    if !upstream {
         let mut round_band = l.round;
         round_band.y -= 20.0 * l.k;
         round_band.h += 20.0 * l.k;
         if let Some(full) = read_counter(img, &g, &round_band, TextKind::Round, &data.digits["round"])
             .filter(|r| r.score >= DIGIT_MIN && r.text.parse::<u32>().is_ok_and(|n| (1..=13).contains(&n))) {
-            round = Some(full);
+            if round.as_ref().is_none_or(|r| r.score < DIGIT_MIN || full.score > r.score
+                || r.text.parse::<u32>().map_or(true, |n| !(1..=13).contains(&n))) {
+                round = Some(full);
+            }
         }
     }
     let n: f64 = round.as_ref().and_then(|r| (!r.text.is_empty()).then(|| r.text.parse::<f64>().unwrap_or(f64::NAN))).unwrap_or(if round.is_some() { 0.0 } else { f64::NAN });

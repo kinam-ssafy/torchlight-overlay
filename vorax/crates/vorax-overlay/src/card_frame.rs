@@ -40,6 +40,15 @@ fn line_peak(lo: f64, hi: f64, minimum: f64, score: impl Fn(f64) -> f64) -> Opti
     Some(near.iter().map(|(x, _)| *x).sum::<f64>() / near.len() as f64)
 }
 
+fn edge_peak(lo: f64, hi: f64, colour_min: f64, colour: impl Fn(f64) -> f64, neutral: impl Fn(f64) -> f64) -> Option<f64> {
+    line_peak(lo, hi, colour_min.min(0.85), |at| {
+        let (c, n) = (colour(at), neutral(at));
+        let c = if c >= colour_min { c } else { 0.0 };
+        let n = if n >= 0.85 { n } else { 0.0 };
+        c.max(n)
+    })
+}
+
 fn vertical(img: &Img, c: &CardPos, height: f64, lo: f64, hi: f64) -> Option<f64> {
     let score = |x: f64, neutral: bool| {
         (0..40).filter(|i| {
@@ -48,8 +57,7 @@ fn vertical(img: &Img, c: &CardPos, height: f64, lo: f64, hi: f64) -> Option<f64
             if neutral { contrast(img, px, y, 3.0 * height / 255.0, 0.0) } else { gold(img, px, y) }
         }).count() as f64 / 40.0
     };
-    line_peak(lo, hi, 0.75, |x| score(x, false))
-        .or_else(|| line_peak(lo, hi, 0.85, |x| score(x, true)))
+    edge_peak(lo, hi, 0.75, |x| score(x, false), |x| score(x, true))
 }
 
 pub fn detect(img: &Img, l: &Layout, size: usize) -> Option<Vec<CardFrame>> {
@@ -57,7 +65,8 @@ pub fn detect(img: &Img, l: &Layout, size: usize) -> Option<Vec<CardFrame>> {
     let (first, last) = (cards.first()?, cards.last()?);
     let (base_w, base_h) = (230.0 * l.k, 340.0 * l.k);
     let edges: Vec<_> = cards.iter().map(|c| (
-        vertical(img, c, base_h, c.cx - base_w * 0.9, c.cx - base_w * 0.1),
+        // Hover spreads the fan horizontally as well as lifting the selected card.
+        vertical(img, c, base_h, c.cx - base_w, c.cx - base_w * 0.1),
         vertical(img, c, base_h, c.cx + base_w * 0.1, c.cx + base_w * 1.2),
     )).collect();
     // A raised card can cover its neighbour's left edge. At least one card is fully exposed;
@@ -90,17 +99,16 @@ pub fn detect(img: &Img, l: &Layout, size: usize) -> Option<Vec<CardFrame>> {
         }).count() as f64 / 40.0;
         // Prefer the row established by the exposed card. Gold header text above the fan can
         // otherwise outscore a partly occluded edge. A genuinely raised card uses the wider search.
-        let top = normal_top.and_then(|y| line_peak(y - base_h * 0.06, y + base_h * 0.06, 0.75, horizontal)
-            .or_else(|| line_peak(y - base_h * 0.06, y + base_h * 0.06, 0.85, neutral_edge)))
-            .or_else(|| line_peak(c.cy - base_h * 0.9, c.cy - base_h * 0.25, 0.75, horizontal))
-            .or_else(|| line_peak(c.cy - base_h * 0.9, c.cy - base_h * 0.25, 0.85, neutral_edge))?;
+        let top = normal_top.and_then(|y| edge_peak(y - base_h * 0.06, y + base_h * 0.06, 0.75, horizontal, neutral_edge))
+            .or_else(|| edge_peak(c.cy - base_h * 0.9, c.cy - base_h * 0.25, 0.75, horizontal, neutral_edge))?;
         normal_top.get_or_insert(top);
         let predicted = known_height.map(|h| top + h / c.angle.cos());
         // Limit the lower-edge search by the exposed card's height, excluding the confirm button.
         let bottom = match predicted {
-            Some(y) => line_peak(y - base_h * 0.035, y + base_h * 0.035, 0.45, horizontal).unwrap_or(y),
-            None => line_peak(c.cy + base_h * 0.25, c.cy + base_h * 0.7, 0.45, horizontal)
-                .or_else(|| line_peak(c.cy + base_h * 0.25, c.cy + base_h * 0.7, 0.85, neutral_edge)).or_else(|| {
+            Some(y) => edge_peak(y - base_h * 0.035, y + base_h * 0.035, 0.45, horizontal, neutral_edge).unwrap_or(y),
+            // Compare both sources of evidence before choosing a row. Taking the first gold
+            // match lets the reroll button below a grey card replace its real lower edge.
+            None => edge_peak(c.cy + base_h * 0.25, c.cy + base_h * 0.7, 0.45, horizontal, neutral_edge).or_else(|| {
                 // A portrait can cover the last card's bottom. Recover the shared height from
                 // another complete card, rather than replacing the whole fan with OCR rectangles.
                 cards[..j].iter().find_map(|other| {
@@ -174,15 +182,18 @@ mod tests {
     #[test]
     fn recorded_fans_keep_geometry_under_brightness_and_resolution_changes() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames");
-        for file in ["initial-ko-1080p.png", "potion-ko-1080p.png", "instrument-ko-1080p.png", "instrument-selected-ko-1080p.png", "potion-round2-ko-1080p.png", "potion-round3-ko-1080p.png"] {
+        for file in ["initial-ko-1080p.png", "potion-ko-1080p.png", "instrument-ko-1080p.png", "instrument-selected-ko-1080p.png", "potion-round2-ko-1080p.png", "potion-round3-ko-1080p.png", "potion-round4-ko-1080p.png", "potion-round5-selected-ko-1080p.png"] {
             let source = crate::pipeline::decode_png(&root.join(file)).unwrap();
             for scale in [1.0, 2.0/3.0, 5.0/6.0] { for gain in [0.85, 1.0, 1.15] {
                 let mut img = vorax_scan::pixels::resize(&source, (1920.0*scale) as usize, (1080.0*scale) as usize);
                 for p in img.data.chunks_exact_mut(4) { for v in &mut p[..3] { *v = (*v as f64*gain).min(255.0) as u8; } }
-                let frames = detect(&img, &vorax_scan::layout::layout(img.width,img.height),3).expect(file);
+                let frames = detect(&img, &vorax_scan::layout::layout(img.width,img.height),3).unwrap_or_else(|| panic!("{file} scale={scale} gain={gain}"));
                 for (i,(c,w,h)) in frames.iter().enumerate() {
-                    let cy = if i==0 && file.contains("selected") {794.0} else if i==1 {819.0} else {825.0};
-                    assert!((c.cx-[889.0,1077.0,1265.0][i]*scale).abs()<8.0*scale && (c.cy-cy*scale).abs()<8.0*scale, "{file} {scale} {gain} {i}: {c:?}");
+                    let cy = if (i==0 && file=="instrument-selected-ko-1080p.png") || (i==2 && file=="potion-round5-selected-ko-1080p.png") {794.0} else if i==1 {819.0} else {825.0};
+                    // The round-five capture also hovers the middle card: its neighbours fan out.
+                    // These are measured fixture coordinates, not assumptions in the detector.
+                    let xs = if file=="potion-round5-selected-ko-1080p.png" {[851.0,1077.0,1305.0]} else {[889.0,1077.0,1265.0]};
+                    assert!((c.cx-xs[i]*scale).abs()<8.0*scale && (c.cy-cy*scale).abs()<8.0*scale, "{file} {scale} {gain} {i}: {frames:?}");
                     assert!((w-226.0*scale).abs()<9.0*scale && (h-300.0*scale).abs()<9.0*scale, "{file} {scale} {gain}: {w}x{h}");
                 }
             } }
@@ -197,6 +208,11 @@ mod tests {
             let (w, h) = ((1920.0 * scale) as u32, (1080.0 * scale) as u32);
             let mut pm = Pixmap::new(w, h).unwrap();
             pm.fill(Color::from_rgba8(65, 45, 40, 255));
+            // Gold controls below the fan must not outrank neutral card borders.
+            let mut button = Paint::default();
+            button.set_color_rgba8(190, 135, 50, 255);
+            pm.fill_rect(tiny_skia::Rect::from_xywh(1190.0, 1004.0, 180.0, 35.0).unwrap(),
+                &button, Transform::from_scale(scale as f32, scale as f32), None);
             let positions = [(886.0, 825.0, -0.0576), (1076.0, 820.0, 0.0), (1265.0, 825.0, 0.0506)];
             let mut draw_card = |j: usize| {
                 let (x, y, angle) = positions[j];

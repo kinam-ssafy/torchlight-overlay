@@ -10,6 +10,7 @@
 - Sentry .NET SDK: Functional Software, MIT. https://github.com/getsentry/sentry-dotnet (network reporting disabled in this build).
 - ClrMD: Microsoft, MIT. https://github.com/microsoft/clrmd
 - Additional Rust and NuGet dependency license files are collected under `licenses/dependencies/`. Cargo.lock and the C# project files record package versions.
+- Nowar Warcraft Rounded: Cyano Hao, with portions by Google and Adobe, SIL OFL 1.1. Small rendered digit references are included; the full font is not. See `licenses/Nowar-Rounded-OFL.txt` and `vorax/data/scan/round-font.md`. https://github.com/nowar-fonts/Nowar-Rounded
 
 Torchlight: Infinite names, text, pictures and recognition templates belong to their respective rights holders. This is an unofficial fan utility, not endorsed by XD. Korean game terminology was checked against https://tlidb.com/ko/Vorax_Season and game facts listed at https://github.com/madstone290/VoraxRoom (no code from the latter is included).
 

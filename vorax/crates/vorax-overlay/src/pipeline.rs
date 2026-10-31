@@ -49,6 +49,7 @@ pub enum Outcome {
 
 pub struct Pipeline {
     last_advice: Option<(String, u32, Advice)>,
+    display_current: bool,
     card_frames: Option<Vec<crate::card_frame::CardFrame>>,
     pub tracker: InstrumentTracker,
     pub shelley: i32,
@@ -84,7 +85,7 @@ pub fn shelley_rerolls(level: i32) -> i32 {
 
 impl Pipeline {
     pub fn new(shelley: i32) -> Pipeline {
-        Pipeline { last_advice: None, card_frames: None, tracker: InstrumentTracker::default(), shelley, instrument_refreshes: None, last: None, protocols: false, resumed: false }
+        Pipeline { last_advice: None, display_current: false, card_frames: None, tracker: InstrumentTracker::default(), shelley, instrument_refreshes: None, last: None, protocols: false, resumed: false }
     }
 
     /// The board's instrument rerolls: as read on an instrument offer, else carried from the last one this game,
@@ -106,6 +107,7 @@ impl Pipeline {
 
     /// The last board advised again (the Shelley level changed): its marks, for a picture of this size.
     pub fn readvise(&mut self) -> Option<(Plan, usize, usize)> {
+        if !self.display_current { return None; }
         let (mut reading, w, h) = self.last.clone()?;
         reading.state.shelley = Some(self.shelley);
         if reading.state.phase != vorax::advisor::ScreenPhase::Instrument {
@@ -121,6 +123,7 @@ impl Pipeline {
 
     /// `frame`: the captured game window; `trigger`: "screen" when the log says a new game opened.
     pub fn run(&mut self, frame: &Img, trigger: Option<&str>, ocr: TextReader) -> Outcome {
+        self.invalidate_display();
         let t = std::time::Instant::now();
         self.resumed = false;
         let data = scan_data();
@@ -215,7 +218,38 @@ impl Pipeline {
         let mut plan = plan_for(&advice, &reading.state, &reading, &l);
         self.align_card(&mut plan, &advice);
         self.last = Some((reading.clone(), img.width, img.height));
+        self.display_current = true;
         Outcome::Advice { reading: Box::new(reading), advice: Box::new(advice), plan, read_ms, cached }
+    }
+
+    /// Keep history for tracking, but never redisplay an old board after a failed/closed capture.
+    pub fn invalidate_display(&mut self) {
+        self.display_current = false;
+    }
+
+    pub fn can_realign(&self) -> bool {
+        self.display_current && self.last_advice.as_ref().is_some_and(|(_, _, a)| matches!(a.best, vorax::advisor::Best::Card(_)))
+    }
+
+    pub fn pointer_near_hand(&self, point: (i32, i32)) -> bool {
+        self.card_frames.as_ref().is_some_and(|frames| frames.iter().any(|(c, w, h)| {
+            (point.0 as f64 - c.cx).abs() < w * 0.65 && (point.1 as f64 - c.cy).abs() < h * 0.7
+        }))
+    }
+
+    /// Hover/selection moves the fan without changing the board. Refit only its outline; do not OCR,
+    /// simulate, alter the instrument history or replace the board state.
+    pub fn realign(&mut self, frame: &Img) -> Option<(Plan, usize, usize)> {
+        if !self.can_realign() { return None; }
+        let img = match windowed_game(frame) { Some(a) => crop_to(frame, &a), None => frame.clone() };
+        let (reading, w, h) = self.last.as_ref()?;
+        if (img.width, img.height) != (*w, *h) { self.invalidate_display(); return None; }
+        let l = layout_at(*w, *h, reading.ui()).shifted_hand(reading.hand_dy.unwrap_or(0.0));
+        self.card_frames = crate::card_frame::detect(&img, &l, reading.state.hand.len());
+        let (_, _, advice) = self.last_advice.as_ref()?;
+        let mut plan = plan_for(advice, &reading.state, reading, &l);
+        self.align_card(&mut plan, advice);
+        Some((plan, *w, *h))
     }
 
     /// A pick the tracker isn't sure of yet, first seen on this board: worth another look once the icon has landed.
@@ -481,14 +515,25 @@ mod tests {
             ("instrument-selected-ko-1080p.png", ["Tanned Leather Restraint", "Black Goat Gut Suture", "Vermicular Spinal Cord"], 2, 1),
             ("potion-round2-ko-1080p.png", ["Vivigenic Powder", "Twin Hormone - Bone Sentry", "Digestive Enzyme Solution"], 3, 2),
             ("potion-round3-ko-1080p.png", ["Targeted Xeno-Hormone", "Osteolytic Ointment", "Mutagenic Powder"], 3, 3),
+            ("potion-round4-ko-1080p.png", ["Green Bile Solution", "Anesthetic Tincture - Agito", "Twin Hormone - Pest"], 3, 4),
+            ("potion-round5-selected-ko-1080p.png", ["Anesthetic Tincture - Aemberon", "Osteolytic Ointment", "Green Bile Solution"], 3, 5),
         ] {
             let frame = decode_png(&root.join(file)).unwrap();
             let mut read = |crop: &Img| ocr.read(crop).unwrap();
+            // A transition can hide the whole fan. It must not produce advice or prevent the
+            // next clear frame from updating the same pipeline instance.
+            let mut covered = frame.clone();
+            for y in 670..990 { for x in 750..1400 {
+                covered.data[(y*covered.width+x)*4..(y*covered.width+x)*4+3].fill(10);
+            } }
+            assert!(!matches!(pipe.run(&covered, Some("board"), Some(&mut read)), Outcome::Advice { .. }), "{file}: obscured hand");
+            assert!(pipe.readvise().is_none(), "{file}: settings must not restore stale advice");
             let outcome = pipe.run(&frame, Some("board"), Some(&mut read));
-            let Outcome::Advice { reading, plan, read_ms, advice, .. } = outcome else {
+            let Outcome::Advice { reading, plan, read_ms, advice, cached } = outcome else {
                 if let Outcome::Uncertain { reading } = outcome { panic!("{file}: {:?} {:?}", reading.problems, reading.fields); }
                 panic!("{file}: no advice");
             };
+            assert!(!cached, "{file}: a new board must recompute advice");
             assert_eq!(reading.state.hand, hand, "{file}");
             assert_eq!(reading.state.instruments, ["Contracted Claws", "Beak of the Twice-Born", "Black Goat Gut Suture"][..owned], "{file}");
             assert_eq!(reading.state.round, Some(round), "{file}");
@@ -496,6 +541,7 @@ mod tests {
                 assert!((215.0..235.0).contains(&width) && (288.0..315.0).contains(&height), "{file}: {width}x{height}");
             }
             eprintln!("{file}: read={read_ms:.0}ms solve={}ms tools={owned} round={round}", advice.ms);
+            assert!(matches!(pipe.run(&frame, None, Some(&mut read)), Outcome::Advice { cached: true, .. }), "{file}: unchanged frame");
         }
     }
 
@@ -503,7 +549,7 @@ mod tests {
     fn localized_counters_keep_values_under_brightness_changes() {
         use super::*;
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames");
-        for (file, round, refresh) in [("initial-ko-1080p.png",1,1),("potion-ko-1080p.png",1,3),("potion-round2-ko-1080p.png",2,3)] {
+        for (file, round, refresh) in [("initial-ko-1080p.png",1,1),("potion-ko-1080p.png",1,3),("potion-round2-ko-1080p.png",2,3),("potion-round3-ko-1080p.png",3,3),("potion-round4-ko-1080p.png",4,3),("potion-round5-selected-ko-1080p.png",5,3)] {
             let source = decode_png(&root.join(file)).unwrap();
             let expected_tanks = serde_json::to_value(scan(&source,scan_data(),false).state.tanks).unwrap();
             for gain in [0.85, 1.0, 1.15] {
@@ -532,8 +578,33 @@ mod tests {
         let Outcome::Advice { advice: second, cached: true, .. } = pipe.run(&frame, None, None) else { panic!("cached calculation") };
         assert_eq!(first.best, second.best);
         assert_eq!(first.ranking, second.ranking);
+        pipe.invalidate_display();
+        assert!(pipe.readvise().is_none(), "closing the screen must invalidate display without losing history");
         pipe.shelley = 6;
         assert!(matches!(pipe.run(&frame, None, None), Outcome::Advice { cached: false, .. }));
+        assert!(pipe.readvise().is_some());
+    }
+
+    #[test]
+    fn moving_a_card_refits_only_geometry_and_keeps_the_exact_advice() {
+        use super::*;
+        let frame = decode_png(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames/potion-round5-selected-ko-1080p.png")).unwrap();
+        let mut pipe = Pipeline::new(3);
+        let mut names = ["Anesthetic Tincture - Aemberon", "Osteolytic Ointment", "Green Bile Solution"].into_iter();
+        let mut read = |_: &Img| vorax_scan::korean::name(names.next().unwrap()).to_owned();
+        let Outcome::Advice { reading, plan, .. } = pipe.run(&frame, None, Some(&mut read)) else { panic!("selected fan must read") };
+        let original = serde_json::to_value(&pipe.last_advice).unwrap();
+        let selected = plan.card.unwrap();
+        assert!((selected.0.cy - 795.0).abs() < 8.0);
+        for (c, _, _) in pipe.card_frames.as_mut().unwrap() { c.cy += 30.0; }
+        assert!(pipe.pointer_near_hand((1265, 800)));
+        assert!(!pipe.pointer_near_hand((400, 200)));
+        let (updated, _, _) = pipe.realign(&frame).unwrap();
+        assert!((updated.card.unwrap().0.cy - selected.0.cy).abs() < 1.0);
+        assert_eq!(serde_json::to_value(&pipe.last_advice).unwrap(), original, "geometry must not call the advisor");
+        assert_eq!(serde_json::to_value(&pipe.last.as_ref().unwrap().0.state).unwrap(), serde_json::to_value(&reading.state).unwrap());
+        pipe.invalidate_display();
+        assert!(pipe.realign(&frame).is_none(), "an invalid board cannot be restored by pointer motion");
     }
 
     #[test]

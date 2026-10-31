@@ -9,7 +9,7 @@ use crate::pipeline::{Outcome, Pipeline};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
-use vorax_scan::live::{log_time, Follower, Settler, Trigger};
+use vorax_scan::live::{classify, log_time, Follower, Settler, Trigger};
 
 pub struct Options {
     pub log: Option<PathBuf>,
@@ -26,6 +26,30 @@ const RELOOK: Duration = Duration::from_millis(1500);
 const RETRY: Duration = Duration::from_millis(700);
 const RETRIES: u32 = 3;
 const SLOW_RETRY: Duration = Duration::from_secs(3);
+
+const GEOMETRY_DELAY: Duration = Duration::from_millis(200);
+
+#[derive(Default)]
+struct MotionWatch {
+    pointer: Option<(i32, i32)>,
+    near_hand: bool,
+    due: Option<Instant>,
+}
+
+impl MotionWatch {
+    fn observe(&mut self, pointer: (i32, i32), near_hand: bool, now: Instant) {
+        if self.pointer != Some(pointer) && (near_hand || self.near_hand) {
+            // Do not postpone forever while the mouse is moving. At rest, no captures are taken.
+            self.due.get_or_insert(now + GEOMETRY_DELAY);
+        }
+        self.pointer = Some(pointer);
+        self.near_hand = near_hand;
+    }
+
+    fn take_due(&mut self, now: Instant) -> bool {
+        if self.due.is_some_and(|t| now >= t) { self.due = None; true } else { false }
+    }
+}
 
 fn retry_delay(attempts: u32) -> Duration {
     if attempts < RETRIES { RETRY } else { SLOW_RETRY }
@@ -78,6 +102,7 @@ pub fn run(opts: Options, tx: Sender<ToUi>, waker: Waker, rx: Receiver<ToWorker>
     // a look again at a card in flight: when, for which trigger, and how many have been made
     let mut retry: Option<(Instant, Option<&'static str>)> = None;
     let mut retries = 0;
+    let mut motion = MotionWatch::default();
     let mut was_over = false;
     // the game's log: when it last had a game line, since when the game is open, and what the window was told
     let mut game_line_at: Option<Instant> = None;
@@ -128,12 +153,20 @@ pub fn run(opts: Options, tx: Sender<ToUi>, waker: Waker, rx: Receiver<ToWorker>
                 let lines = f.poll();
                 if !lines.is_empty() {
                     settler.feed(&lines, now_ms());
+                    if lines.iter().any(|line| matches!(classify(line), Some(Trigger::Board | Trigger::Screen | Trigger::Over))) {
+                        pipe.invalidate_display();
+                        motion = MotionWatch::default();
+                        send(ToUi::Busy);
+                    } else if pipe.can_realign() && lines.iter().any(|line| line.contains("KYZ_Card_Selected'")) {
+                        motion.due = Some(Instant::now() + GEOMETRY_DELAY);
+                    }
                     if lines.iter().any(|l| l.contains(GAME_LINE)) {
                         game_line_at = Some(Instant::now());
                     }
                 }
             }
             if settler.over && !was_over {
+                pipe.invalidate_display();
                 note("the game's Vorax screen closed");
                 status("수술 준비 화면 대기", "다음 화면을 기다립니다.", "보드 닫힘");
                 send(ToUi::Clear);
@@ -181,6 +214,7 @@ pub fn run(opts: Options, tx: Sender<ToUi>, waker: Waker, rx: Receiver<ToWorker>
             // the look again after a pick, to settle the new icon: the board hasn't changed, so the marks stay up
             // while it reads and only change if what it finds does
             let quiet = relook && due.is_none() && !manual && again.is_none();
+            pipe.invalidate_display();
             let unread = read(&capturer, ocr.as_ref(), &mut pipe, trigger, manual || relook, quiet, opts.frames.as_deref(), &send);
             if !unread {
                 retries = 0;
@@ -195,6 +229,22 @@ pub fn run(opts: Options, tx: Sender<ToUi>, waker: Waker, rx: Receiver<ToWorker>
                 relook_at = Some(Instant::now() + RELOOK);
             }
         }
+        if pipe.can_realign() {
+            if let Some(game) = find_game_window().filter(|g| super::sys::foreground() == *g) {
+                if let Some(point) = super::sys::client_pointer(game) {
+                    motion.observe(point, pipe.pointer_near_hand(point), Instant::now());
+                }
+                if motion.take_due(Instant::now()) {
+                    let start = Instant::now();
+                    if let Ok(Some(frame)) = capturer.grab(game) {
+                        if let Some((plan, w, h)) = pipe.realign(&frame) {
+                            note(&format!("card geometry refreshed in {} ms (no OCR or simulation)", start.elapsed().as_millis()));
+                            send(ToUi::Show(plan, w, h));
+                        }
+                    }
+                }
+            } else { motion = MotionWatch::default(); }
+        } else { motion = MotionWatch::default(); }
         std::thread::sleep(Duration::from_millis(50));
     }
 }
@@ -278,9 +328,14 @@ fn read(capturer: &Capturer, ocr: Option<&Ocr>, pipe: &mut Pipeline, trigger: Op
         // the board changed and a card is still moving: the marks stay hidden (the pill dimmed) while it looks again,
         // rather than the old ones blinking back between looks (2-3 flashes while long effects play out)
         Outcome::Uncertain { reading } => {
-            let fields: Vec<_> = reading.fields.iter().filter(|(k, f)| !f.sure && (k.starts_with("hand") || *k == "refreshes" || *k == "round" || k.starts_with("tank"))).map(|(k, _)| k.as_str()).collect();
+            let fields: Vec<_> = reading.fields.iter().filter(|(k, f)| !f.sure && (k.starts_with("hand") || *k == "refreshes" || *k == "round" || k.starts_with("tank") || k.starts_with("instrument"))).map(|(k, _)| k.as_str()).collect();
             note(&format!("unread board: fields {fields:?}; problems {:?}", reading.problems));
-            status("인식 재시도 중", "카드나 수치를 확인하고 있습니다. 화면이 선명해지면 자동으로 다시 추천합니다.", "추천 보류 / 자동 재시도");
+            let labels: Vec<_> = [("round", "라운드 숫자"), ("hand", "카드 이름"), ("tank", "탱크 수치"),
+                ("instrument", "보유 수술 도구"), ("refreshes", "새로고침 횟수")].iter()
+                .filter(|(key, _)| fields.iter().any(|field| field.starts_with(key))).map(|(_, label)| *label).collect();
+            let detail = if labels.is_empty() { "화면 전환을 확인하고 있습니다.".to_owned() }
+                else { format!("확인 중: {}. 자동으로 다시 읽습니다.", labels.join(", ")) };
+            status("인식 재시도 중", &detail, "추천 보류 / 자동 재시도");
             send(ToUi::Clear);
         }
         Outcome::Animating => {
@@ -318,6 +373,21 @@ fn status(title: &str, detail: &str, state: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pointer_motion_is_bounded_and_tracks_entering_leaving_and_rest() {
+        let start = Instant::now();
+        let mut watch = MotionWatch::default();
+        watch.observe((100, 100), false, start);
+        assert!(!watch.take_due(start + Duration::from_secs(1)));
+        watch.observe((1000, 800), true, start);
+        watch.observe((1050, 800), true, start + Duration::from_millis(150));
+        assert!(watch.take_due(start + GEOMETRY_DELAY), "motion must not postpone capture");
+        watch.observe((1050, 800), true, start + Duration::from_secs(1));
+        assert!(!watch.take_due(start + Duration::from_secs(2)), "stationary pointer must not poll frames");
+        watch.observe((1400, 500), false, start + Duration::from_secs(2));
+        assert!(watch.take_due(start + Duration::from_secs(3)), "leaving must restore lowered geometry");
+    }
 
     #[test]
     fn unread_boards_keep_retrying_at_a_bounded_rate() {

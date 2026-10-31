@@ -90,6 +90,14 @@ pub fn foreground() -> Hwnd {
     Hwnd::of(unsafe { GetForegroundWindow() })
 }
 
+/// Read the pointer in client pixels. No input is sent to the game.
+pub fn client_pointer(h: Hwnd) -> Option<(i32, i32)> {
+    let (x, y, _, _) = client_rect(h)?;
+    let mut p = POINT::default();
+    unsafe { windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut p).ok()?; }
+    Some((p.x - x, p.y - y))
+}
+
 fn reg_string(root: HKEY, key: PCWSTR, value: PCWSTR) -> Option<String> {
     let mut buf = [0u16; 1024];
     let mut len = (buf.len() * 2) as u32;

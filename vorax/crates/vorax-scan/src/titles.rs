@@ -67,8 +67,12 @@ const BLUR: usize = 8;
 
 /// A card's title area, straightened and enlarged, as dark text on white.
 pub fn title_crop(img: &Img, c: &CardPos, k: f64) -> Img {
-    let r = Rect::new(TITLE_AREA.x * ZOOM, TITLE_AREA.y * ZOOM, TITLE_AREA.w * ZOOM, TITLE_AREA.h * ZOOM);
-    let p = patch(img, c.cx, c.cy, c.angle, r, k / ZOOM);
+    adaptive_crop(img, c, k, TITLE_AREA, ZOOM)
+}
+
+fn adaptive_crop(img: &Img, c: &CardPos, k: f64, area: Rect, zoom: f64) -> Img {
+    let r = Rect::new(area.x * zoom, area.y * zoom, area.w * zoom, area.h * zoom);
+    let p = patch(img, c.cx, c.cy, c.angle, r, k / zoom);
     let (w, h) = (p.width, p.height);
     let g: Vec<f32> = (0..w * h).map(|i| p.data[i * 4].max(p.data[i * 4 + 1]).max(p.data[i * 4 + 2]) as f32).collect();
     let mut sum = vec![0f64; (w + 1) * (h + 1)];
@@ -121,7 +125,9 @@ fn heading_at(img: &Img, c: &CardPos, k: f64, threshold: u8) -> Img {
     let r = Rect::new(-140.0 * zoom, -90.0 * zoom, 280.0 * zoom, 55.0 * zoom);
     let mut out = patch(img, c.cx, c.cy, c.angle, r, k / zoom);
     for p in out.data.chunks_exact_mut(4) {
-        let v = if p[2] >= threshold { 0 } else { 255 };
+        // Pale letters have energy in all channels; saturated card glow does not. Using only
+        // blue makes the blue background merge with the strokes of a magic card's title.
+        let v = if p[0].min(p[1]).min(p[2]) >= threshold { 0 } else { 255 };
         p[0] = v; p[1] = v; p[2] = v; p[3] = 255;
     }
     out
@@ -177,8 +183,8 @@ pub fn read_titles(img: &Img, reading: Reading, data: &ScanData, read_text: &mut
     read_titles_styled(img, reading, data, read_text, pictures_of, false, None)
 }
 
-/// Korean's gold headings are fastest and clearest in the blue-channel mask. The original adaptive
-/// contrast remains the fallback, and the default entry point preserves the upstream reading contract.
+/// Korean headings use a pale-letter mask followed by local contrast. Both operate on the same
+/// measured heading region; the default entry point preserves the upstream reading contract.
 pub fn read_titles_styled(img: &Img, reading: Reading, data: &ScanData, read_text: &mut dyn FnMut(&Img) -> String, pictures_of: Option<&dyn Fn(&str, usize, &[usize]) -> HashMap<usize, PictureRead>>, gold_first: bool, positions: Option<&[CardPos]>) -> Reading {
     let read = reading.hand_ranks.as_ref().map_or(0, |r| r.len());
     if (read == 0 && reading.hand_pending != Some(true)) || reading.has(|p| matches!(p, Problem::NotFound | Problem::Animating)) {
@@ -197,6 +203,9 @@ pub fn read_titles_styled(img: &Img, reading: Reading, data: &ScanData, read_tex
         if gold_first {
             let heading = read_text(&title_crop_heading(img, c, l.k));
             if phases.iter().any(|phase| settled(&ranked(data, phase, &heading))) { return heading; }
+            // Local contrast recovers strokes lost to absolute brightness without involving description text.
+            let adaptive = read_text(&adaptive_crop(img, c, l.k, Rect::new(-140.0, -90.0, 280.0, 55.0), 3.0));
+            if phases.iter().any(|phase| settled(&ranked(data, phase, &adaptive))) { return adaptive; }
             for threshold in [70, 50] {
                 let dim = read_text(&heading_at(img, c, l.k, threshold));
                 if phases.iter().any(|phase| settled(&ranked(data, phase, &dim))) { return dim; }

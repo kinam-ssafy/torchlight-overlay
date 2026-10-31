@@ -350,6 +350,16 @@ pub fn read_text(img: &Img, g: &[f32], r: &Rect, kind: TextKind, refs: &IndexMap
 /// threshold are unchanged; only foreground segmentation uses the local text's brightness.
 pub fn read_counter(img: &Img, g: &[f32], r: &Rect, kind: TextKind, refs: &IndexMap<String, Vec<Vec<f64>>>) -> Option<TextRead> {
     let gs = counter_glyphs(img, r, kind, true);
+    if kind == TextKind::Round {
+        // The localized round display uses a different font from the upstream digit samples.
+        // References cover every digit; retain both a shape threshold and runner-up margin.
+        static FONT: std::sync::OnceLock<IndexMap<String, Vec<Vec<f64>>>> = std::sync::OnceLock::new();
+        let font = FONT.get_or_init(|| serde_json::from_str(include_str!("../../../data/scan/round-font.json")).expect("round font references"));
+        if let Some(value) = read_glyphs(img, g, &gs, font)
+            .filter(|v| v.score >= 0.85 && v.score - v.second >= 0.10) {
+            return Some(value);
+        }
+    }
     read_glyphs(img, g, &gs, refs)
 }
 
