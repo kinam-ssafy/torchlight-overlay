@@ -82,6 +82,21 @@
       <TextBlock x:Name="ContentStatus" Text="자동 감지 대기" Foreground="#83E0C8" FontSize="12" Margin="0,6,0,0" TextWrapping="Wrap" />
     </StackPanel>
     <TextBlock DockPanel.Dock="Bottom" Margin="0,14,0,0" Text="추천 표시는 클릭을 통과합니다. 선택과 확인은 직접 진행하세요." Foreground="#97A9BF" FontSize="11" TextWrapping="Wrap" />
+    <Border x:Name="UpdatePanel" DockPanel.Dock="Bottom" BorderBrush="#304058" BorderThickness="0,1,0,0" Margin="0,12,0,0" Padding="0,10,0,0">
+      <StackPanel>
+        <DockPanel>
+          <CheckBox x:Name="UpdateCheck" DockPanel.Dock="Right" Content="시작할 때 확인" Checked="UpdateCheck_Changed" Unchecked="UpdateCheck_Changed" />
+          <TextBlock x:Name="VersionText" Text="버전" Foreground="#97A9BF" FontSize="12" />
+        </DockPanel>
+        <WrapPanel Margin="0,8,0,0">
+          <Button x:Name="CheckUpdateButton" Content="업데이트 확인" Click="CheckUpdateButton_Click" />
+          <Button x:Name="UpdateNotesButton" Content="변경 내용" Visibility="Collapsed" Click="UpdateNotesButton_Click" />
+          <Button x:Name="UpdateButton" Content="다운로드 및 업데이트" Visibility="Collapsed" Click="UpdateButton_Click" />
+          <Button x:Name="CancelUpdateButton" Content="취소" Visibility="Collapsed" Click="CancelUpdateButton_Click" />
+        </WrapPanel>
+        <TextBlock x:Name="UpdateStatus" Foreground="#97A9BF" FontSize="12" TextWrapping="Wrap" Margin="0,6,0,0" />
+      </StackPanel>
+    </Border>
     <TabControl x:Name="ModeTabs" Background="#172130" BorderBrush="#304058" SelectionChanged="ModeTabs_SelectionChanged">
       <TabItem Header="타르타로스">
       <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -200,13 +215,8 @@
         </ListBox.ItemTemplate>
       </ListBox>
     </StackPanel>
-    <DockPanel x:Name="UpdatePanel" Margin="0,8,0,0">
-      <Button x:Name="UpdateButton" DockPanel.Dock="Right" Margin="6,0,0,0" Visibility="Collapsed" Click="UpdateButton_Click" />
-      <CheckBox x:Name="UpdateCheck" Content="원본 업데이트 확인" ToolTip="Ask GitHub for a new version at start and every 6 hours" Checked="UpdateCheck_Changed" Unchecked="UpdateCheck_Changed" />
-    </DockPanel>
     <DockPanel Margin="0,8,0,0">
       <Button x:Name="ReportButton" DockPanel.Dock="Right" Margin="6,0,0,0" Content="진단 저장" ToolTip="화면과 진단 로그를 이 프로그램 폴더에 저장합니다." Click="ReportButton_Click" />
-      <TextBlock x:Name="VersionText" Foreground="#6F7580" TextWrapping="Wrap" Text="버전" />
     </DockPanel>
       </StackPanel></ScrollViewer></TabItem>
       <TabItem Header="블러드 러스트">

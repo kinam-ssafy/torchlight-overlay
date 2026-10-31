@@ -3,122 +3,112 @@ using System.Windows;
 
 namespace Tartarus.App;
 
-/// <summary>New versions: asked of GitHub at start and every few hours, installed by the Update button.</summary>
 public partial class ControlWindow
 {
-    private static readonly TimeSpan UpdateEvery = TimeSpan.FromHours(6);
-    private Updates.Release? _update;
-    private CancellationTokenSource? _updateChecks;
+    private UpdatePackage.Release? _update;
+    private readonly CancellationTokenSource _updateLifetime = new();
+    private CancellationTokenSource? _updateDownload;
+    private bool _checkingUpdate;
     private bool _updating;
+    private bool _updatesReady;
 
-    /// <summary>The checkbox as the settings have it (on the first time); the debug window neither shows it nor checks.</summary>
     private void SetupUpdates()
     {
-        if (!_settings.CheckUpdates || _settings.Debug)
-        {
-            UpdatePanel.Visibility = Visibility.Collapsed;
-            return;
-        }
-        Updates.CleanUp();
         UpdateCheck.IsChecked = _settings.CheckUpdates;
+        UpdateStatus.Text = "버튼을 눌러 새 버전을 확인하세요.";
+        _updatesReady = true;
+        if (_settings.CheckUpdates && !PreviewMode)
+            Loaded += async (_, _) => await CheckLatestAsync();
     }
 
     private void UpdateCheck_Changed(object sender, RoutedEventArgs e)
     {
-        bool on = UpdateCheck.IsChecked == true;
-        if (_settings.CheckUpdates != on)
-        {
-            _settings.CheckUpdates = on;
-            _settings.Save();
-        }
-        _updateChecks?.Cancel();
-        _updateChecks = null;
-        if (on)
-        {
-            _updateChecks = new CancellationTokenSource();
-            _ = CheckUpdatesAsync(_updateChecks.Token);
-        }
-        else if (!_updating) UpdateButton.Visibility = Visibility.Collapsed;
+        if (!_updatesReady) return;
+        _settings.CheckUpdates = UpdateCheck.IsChecked == true;
+        _settings.Save();
     }
 
-    private async Task CheckUpdatesAsync(CancellationToken ct)
+    private async void CheckUpdateButton_Click(object sender, RoutedEventArgs e) => await CheckLatestAsync();
+
+    private async Task CheckLatestAsync()
     {
-        bool failed = false, latestSaid = false;
+        if (_checkingUpdate || _updating) return;
+        _checkingUpdate = true;
+        CheckUpdateButton.IsEnabled = false;
+        UpdateStatus.Text = "새 버전 확인 중...";
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(3), ct);
-            while (true)
+            _update = await Updates.LatestAsync(_updateLifetime.Token);
+            UpdateButton.Visibility = Visibility.Collapsed;
+            UpdateNotesButton.Visibility = Visibility.Collapsed;
+            if (_update == null) UpdateStatus.Text = "확인할 수 있는 정식 릴리스가 없습니다.";
+            else if (_update.Version > UpdatePackage.Current)
             {
-                try
-                {
-                    var latest = await Updates.LatestAsync(ct);
-                    if (latest != null && latest.Version > Updates.Current && latest.Version != _update?.Version)
-                    {
-                        _update = latest;
-                        Log($"Update: version {latest.Version} is out ({latest.Page})");
-                        ShowUpdate(latest);
-                    }
-                    else if (latest != null && latest.Version <= Updates.Current && !latestSaid)
-                    {
-                        // Once a start: the check ran and found nothing newer.
-                        latestSaid = true;
-                        Log($"Update check: {AppVersion.Number} is the latest version (GitHub's latest is {latest.Version})");
-                    }
-                }
-                catch (Exception ex) when (!ct.IsCancellationRequested)
-                {
-                    // Offline, or GitHub not answering: said once, asked again later.
-                    if (!failed) Log("Update check failed: " + ex.Message);
-                    failed = true;
-                }
-                await Task.Delay(UpdateEvery, ct);
+                UpdateStatus.Text = $"새 버전 {_update.Version}을 사용할 수 있습니다.";
+                UpdateButton.Content = _update.Url != null && Updates.Installed ? "다운로드 및 업데이트" : "다운로드 페이지";
+                UpdateButton.Visibility = Visibility.Visible;
+                UpdateNotesButton.Visibility = Visibility.Visible;
+                if (_update.Url == null) UpdateStatus.Text += " 자동 설치용 파일은 아직 준비되지 않았습니다.";
             }
+            else UpdateStatus.Text = _update.Version == UpdatePackage.Current ? "최신 버전입니다." : $"공개 최신 버전은 {_update.Version}입니다. 현재 버전이 더 새롭습니다.";
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (_updateLifetime.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            UpdateStatus.Text = "업데이트 확인 실패. 네트워크 연결을 확인하고 다시 시도하세요.";
+            UpdateStatus.ToolTip = ex.Message;
+            Log("Companion update check failed: " + ex.Message);
+        }
+        finally { _checkingUpdate = false; CheckUpdateButton.IsEnabled = true; }
     }
 
-    private void ShowUpdate(Updates.Release release)
+    private void UpdateNotesButton_Click(object sender, RoutedEventArgs e)
     {
-        bool install = release.Url != null && Updates.Installed;
-        UpdateButton.Content = $"Update to {release.Version}";
-        string notes = release.Notes.Length > 1500 ? release.Notes[..1500] + "…" : release.Notes;
-        UpdateButton.ToolTip = (install ? $"Download {release.Asset} ({release.Size / 1048576.0:0} MB), install it and restart" : "Open the release's page")
-            + (notes.Length > 0 ? "\n\n" + notes : "");
-        UpdateButton.Visibility = Visibility.Visible;
+        if (_update is not { } release) return;
+        var notes = release.Notes.Length > 3500 ? release.Notes[..3500] + "\n(전체 내용은 릴리스 페이지에서 확인하세요.)" : release.Notes;
+        MessageBox.Show(this, string.IsNullOrWhiteSpace(notes) ? "변경 내용이 등록되지 않았습니다." : notes, $"토치라이트 오버레이 {release.Version} 변경 내용", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private async void UpdateButton_Click(object sender, RoutedEventArgs e)
     {
         if (_update is not { } release || _updating) return;
-        // A build from source, or a release without this install's zip: the page, to take it by hand.
         if (release.Url == null || !Updates.Installed)
         {
             Process.Start(new ProcessStartInfo(release.Page) { UseShellExecute = true });
             return;
         }
-        if (MessageBox.Show(this, $"Download version {release.Version} ({release.Size / 1048576.0:0} MB), put it in place of this one and restart the app?",
-                "Tartarus Solver: update", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        if (MessageBox.Show(this, $"버전 {release.Version} ({release.Size / 1048576.0:0} MB)을 다운로드하고 설치할까요?\n\n펫 단계와 설정, 로그는 유지됩니다. 설치할 때 오버레이가 종료되고 다시 실행됩니다.",
+                "토치라이트 오버레이 업데이트", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
         _updating = true;
-        UpdateButton.IsEnabled = false;
+        UpdateButton.IsEnabled = CheckUpdateButton.IsEnabled = false;
+        CancelUpdateButton.Visibility = Visibility.Visible;
+        using var download = CancellationTokenSource.CreateLinkedTokenSource(_updateLifetime.Token);
+        _updateDownload = download;
         try
         {
-            var progress = new Progress<double>(p => UpdateButton.Content = $"Downloading… {p * 100:0}%");
-            string app = await Updates.DownloadAsync(release, progress);
-            Log($"Update: {release.Asset} downloaded and checked, installing");
-            UpdateButton.Content = "Installing…";
-            // Windows may check the fresh exe for seconds before it starts (2026-10-28, a player's Sentry hang): off the
-            // UI thread, so the window keeps answering.
-            var args = Environment.GetCommandLineArgs().Skip(1).ToArray();
-            await Task.Run(() => Updates.StartInstall(app, args));
+            var progress = new Progress<double>(p => UpdateStatus.Text = $"업데이트 다운로드 중 {p * 100:0}%");
+            string app = await Updates.DownloadAsync(release, progress, download.Token);
+            download.Token.ThrowIfCancellationRequested();
+            CancelUpdateButton.Visibility = Visibility.Collapsed;
+            UpdateStatus.Text = "검증 완료. 업데이트 후 다시 시작합니다.";
+            await Task.Run(() => Updates.StartInstall(app));
             Application.Current.Shutdown();
         }
+        catch (OperationCanceledException) { UpdateStatus.Text = "다운로드를 취소했습니다. 현재 버전을 계속 사용할 수 있습니다."; }
         catch (Exception ex)
         {
-            Log("Update failed: " + ex.Message);
-            MessageBox.Show(this, $"The update failed: {ex.Message}", "Tartarus Solver: update", MessageBoxButton.OK, MessageBoxImage.Warning);
-            UpdateButton.Content = $"Update to {release.Version}";
-            UpdateButton.IsEnabled = true;
+            UpdateStatus.Text = "업데이트 실패. 현재 버전을 계속 사용할 수 있습니다.";
+            Log("Companion update failed: " + ex.Message);
+            MessageBox.Show(this, ex.Message, "토치라이트 오버레이 업데이트", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            _updateDownload = null;
             _updating = false;
+            UpdateButton.IsEnabled = CheckUpdateButton.IsEnabled = true;
+            CancelUpdateButton.Visibility = Visibility.Collapsed;
         }
     }
+
+    private void CancelUpdateButton_Click(object sender, RoutedEventArgs e) => _updateDownload?.Cancel();
 }

@@ -2,11 +2,13 @@
 from pathlib import Path
 import hashlib
 import json
+import re
 import zipfile
 
 ROOT = Path(__file__).resolve().parent
 BUILD = ROOT / 'release' / 'TorchlightHelper-KO'
-ARCHIVE = ROOT / 'release' / 'TorchlightHelper-KO-1.0.2-win-x64.zip'
+VERSION = re.search(r'public const string VersionNumber = "([0-9.]+)";', (ROOT/'tartarus/src/Tartarus.App/UpdatePackage.cs').read_text(encoding='utf-8')).group(1)
+ARCHIVE = ROOT / 'release' / f'TorchlightHelper-KO-{VERSION}-win-x64.zip'
 BLOCKED = {'user-data', 'dataset', 'reports', 'qa'}
 
 def digest(path):

@@ -89,12 +89,12 @@ public partial class ControlWindow : Window
         AutoScanCheck.ToolTip = Hk("auto");
         ReportButton.Content = "진단 저장";
         ReportButton.ToolTip = Hk("report");
-        Title = $"토치라이트 오버레이 KO / {AppVersion.Number}" + (settings.Debug ? " (debug)" : "");
+        Title = $"토치라이트 오버레이 / {UpdatePackage.VersionNumber}" + (settings.Debug ? " (debug)" : "");
         // The player's window: the game window, scanning, the hints' quality and alternatives, the game's log, the version
         // and bug reports.
         if (!settings.Debug)
             foreach (var panel in new FrameworkElement[] { ViewPanel, HintsCheck, HintsOnlyCheck, DebugPanel }) panel.Visibility = Visibility.Collapsed;
-        VersionText.Text = "KO 1.0.2 / 원본 " + AppVersion.Short;
+        VersionText.Text = "현재 버전 " + UpdatePackage.VersionNumber;
         VersionText.ToolTip = AppVersion.Full;
         Log("Version " + AppVersion.Short + (BugReports.Enabled ? "" : " · bug reports not set up"));
 
@@ -164,6 +164,7 @@ public partial class ControlWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        _updateLifetime.Cancel();
         _companionReady = false;
         _activeContent = GameContent.None;
         _settings.ControlLeft = Left;

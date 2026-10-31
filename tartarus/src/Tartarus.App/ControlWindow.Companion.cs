@@ -198,7 +198,7 @@ public partial class ControlWindow
     private void StopVorax()
     {
         if (_vorax == null) return;
-        try { if (!_vorax.HasExited) _vorax.Kill(entireProcessTree: true); }
+        try { if (!_vorax.HasExited) { _vorax.Kill(entireProcessTree: true); _vorax.WaitForExit(5000); } }
         catch (InvalidOperationException) { }
         finally { _vorax.Dispose(); _vorax = null; }
         VoraxToggle.Content = "다시 시작";
