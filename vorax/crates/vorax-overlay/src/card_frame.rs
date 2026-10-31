@@ -1,4 +1,4 @@
-//! Fit the visible gold or blue card edges. Localized cards have different widths and spacing, so an OCR
+//! Fit the visible card edges, including neutral borders. Localized cards have different widths and spacing, so an OCR
 //! crop is not a reliable rectangle to draw. Searches are bounded to the already detected hand.
 use vorax_scan::{layout::{CardPos, Layout}, pixels::Img};
 
@@ -16,6 +16,21 @@ fn gold(img: &Img, x: f64, y: f64) -> bool {
     [(0.0, 0.0), (-2.0, 0.0), (2.0, 0.0), (0.0, -2.0), (0.0, 2.0)].iter().any(|(dx, dy)| gold_pixel(img, x + dx, y + dy))
 }
 
+/// A long boundary is evidence regardless of rarity colour. Sample across it, not along it:
+/// scattered white title glyphs must not stand in for an entire card edge.
+fn contrast(img: &Img, x: f64, y: f64, dx: f64, dy: f64) -> bool {
+    let brightness = |x: f64, y: f64| {
+        let (x, y) = (x.round() as isize, y.round() as isize);
+        if x < 0 || y < 0 || x >= img.width as isize || y >= img.height as isize { return None; }
+        let (r, g, b) = img.px(x as usize, y as usize);
+        Some((r as f64 + g as f64 + b as f64) / 3.0)
+    };
+    match (brightness(x - dx, y - dy), brightness(x + dx, y + dy)) {
+        (Some(a), Some(b)) => (a - b).abs() > 22.0,
+        _ => false,
+    }
+}
+
 fn line_peak(lo: f64, hi: f64, minimum: f64, score: impl Fn(f64) -> f64) -> Option<f64> {
     let values: Vec<_> = (lo.floor() as i32..=hi.ceil() as i32).map(|n| (n as f64, score(n as f64))).collect();
     let &(at, best) = values.iter().max_by(|a, b| a.1.total_cmp(&b.1))?;
@@ -26,13 +41,15 @@ fn line_peak(lo: f64, hi: f64, minimum: f64, score: impl Fn(f64) -> f64) -> Opti
 }
 
 fn vertical(img: &Img, c: &CardPos, height: f64, lo: f64, hi: f64) -> Option<f64> {
-    line_peak(lo, hi, 0.75, |x| {
+    let score = |x: f64, neutral: bool| {
         (0..40).filter(|i| {
             let y = c.cy + ((*i as f64 / 39.0) - 0.5) * height * 0.6;
             let px = x - c.angle.tan() * (y - c.cy);
-            gold(img, px, y)
+            if neutral { contrast(img, px, y, 3.0 * height / 255.0, 0.0) } else { gold(img, px, y) }
         }).count() as f64 / 40.0
-    })
+    };
+    line_peak(lo, hi, 0.75, |x| score(x, false))
+        .or_else(|| line_peak(lo, hi, 0.85, |x| score(x, true)))
 }
 
 pub fn detect(img: &Img, l: &Layout, size: usize) -> Option<Vec<CardFrame>> {
@@ -66,27 +83,24 @@ pub fn detect(img: &Img, l: &Layout, size: usize) -> Option<Vec<CardFrame>> {
             let x = lx + width * (0.1 + *i as f64 / 39.0 * (visible - 0.1));
             gold(img, x, y + c.angle.tan() * (x - mid))
         }).count() as f64 / 40.0;
-        // Normal potions can have a grey border. Only near the established top row, accept a
-        // continuous luminance edge too; white text inside a card must not become its boundary.
-        let top_edge = |y: f64| (0..40).filter(|i| {
+        let neutral_edge = |y: f64| (0..40).filter(|i| {
             let x = lx + width * (0.1 + *i as f64 / 39.0 * (visible - 0.1));
             let y = y + c.angle.tan() * (x - mid);
-            let (x, y) = (x.round() as isize, y.round() as isize);
-            if x < 0 || x >= img.width as isize || y < 3 || y + 3 >= img.height as isize { return false; }
-            let brightness = |yy| { let (r,g,b) = img.px(x as usize, yy as usize); (r as f64 + g as f64 + b as f64) / 3.0 };
-            (brightness(y - 3) - brightness(y + 3)).abs() > 22.0
+            contrast(img, x, y, 0.0, 4.0 * l.k)
         }).count() as f64 / 40.0;
         // Prefer the row established by the exposed card. Gold header text above the fan can
         // otherwise outscore a partly occluded edge. A genuinely raised card uses the wider search.
         let top = normal_top.and_then(|y| line_peak(y - base_h * 0.06, y + base_h * 0.06, 0.75, horizontal)
-            .or_else(|| line_peak(y - base_h * 0.06, y + base_h * 0.06, 0.85, top_edge)))
-            .or_else(|| line_peak(c.cy - base_h * 0.9, c.cy - base_h * 0.25, 0.75, horizontal))?;
+            .or_else(|| line_peak(y - base_h * 0.06, y + base_h * 0.06, 0.85, neutral_edge)))
+            .or_else(|| line_peak(c.cy - base_h * 0.9, c.cy - base_h * 0.25, 0.75, horizontal))
+            .or_else(|| line_peak(c.cy - base_h * 0.9, c.cy - base_h * 0.25, 0.85, neutral_edge))?;
         normal_top.get_or_insert(top);
         let predicted = known_height.map(|h| top + h / c.angle.cos());
         // Limit the lower-edge search by the exposed card's height, excluding the confirm button.
         let bottom = match predicted {
             Some(y) => line_peak(y - base_h * 0.035, y + base_h * 0.035, 0.45, horizontal).unwrap_or(y),
-            None => line_peak(c.cy + base_h * 0.25, c.cy + base_h * 0.7, 0.45, horizontal).or_else(|| {
+            None => line_peak(c.cy + base_h * 0.25, c.cy + base_h * 0.7, 0.45, horizontal)
+                .or_else(|| line_peak(c.cy + base_h * 0.25, c.cy + base_h * 0.7, 0.85, neutral_edge)).or_else(|| {
                 // A portrait can cover the last card's bottom. Recover the shared height from
                 // another complete card, rather than replacing the whole fan with OCR rectangles.
                 cards[..j].iter().find_map(|other| {
@@ -160,7 +174,7 @@ mod tests {
     #[test]
     fn recorded_fans_keep_geometry_under_brightness_and_resolution_changes() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames");
-        for file in ["initial-ko-1080p.png", "potion-ko-1080p.png", "instrument-ko-1080p.png", "instrument-selected-ko-1080p.png", "potion-round2-ko-1080p.png"] {
+        for file in ["initial-ko-1080p.png", "potion-ko-1080p.png", "instrument-ko-1080p.png", "instrument-selected-ko-1080p.png", "potion-round2-ko-1080p.png", "potion-round3-ko-1080p.png"] {
             let source = crate::pipeline::decode_png(&root.join(file)).unwrap();
             for scale in [1.0, 2.0/3.0, 5.0/6.0] { for gain in [0.85, 1.0, 1.15] {
                 let mut img = vorax_scan::pixels::resize(&source, (1920.0*scale) as usize, (1080.0*scale) as usize);
@@ -173,6 +187,46 @@ mod tests {
                 }
             } }
         }
+    }
+
+    #[test]
+    fn every_rarity_order_and_raised_slot_keeps_full_card_geometry() {
+        use tiny_skia::{Color, Paint, PathBuilder, Pixmap, Stroke, Transform, FillRule};
+        let palette = [[145, 145, 145], [255, 190, 65], [40, 155, 230]];
+        for order in 0..27 { for raised in 0..4 { for scale in [1.0, 0.75] {
+            let (w, h) = ((1920.0 * scale) as u32, (1080.0 * scale) as u32);
+            let mut pm = Pixmap::new(w, h).unwrap();
+            pm.fill(Color::from_rgba8(65, 45, 40, 255));
+            let positions = [(886.0, 825.0, -0.0576), (1076.0, 820.0, 0.0), (1265.0, 825.0, 0.0506)];
+            let mut draw_card = |j: usize| {
+                let (x, y, angle) = positions[j];
+                let y = y - if raised == j { 30.0 } else { 0.0 };
+                let mut pb = PathBuilder::new();
+                pb.push_rect(tiny_skia::Rect::from_xywh(-112.5, -151.0, 225.0, 302.0).unwrap());
+                let path = pb.finish().unwrap();
+                let transform = Transform::from_rotate((angle as f64).to_degrees() as f32).post_translate(x as f32, y as f32).post_scale(scale as f32, scale as f32);
+                let mut p = Paint::default();
+                p.set_color_rgba8(20, 20, 20, 255);
+                pm.fill_path(&path, &p, FillRule::Winding, transform, None);
+                let [r, g, b] = palette[(order / 3usize.pow(j as u32)) % 3];
+                p.set_color_rgba8(r, g, b, 255);
+                pm.stroke_path(&path, &p, &Stroke { width: 4.0, ..Default::default() }, transform, None);
+            };
+            // Selected cards are in front of both neighbours.
+            for j in 0..3 { if j != raised { draw_card(j); } }
+            if raised < 3 { draw_card(raised); }
+            let img = Img { width: w as usize, height: h as usize, data: pm.data().to_vec() };
+            let fitted = detect(&img, &vorax_scan::layout::layout(w as usize, h as usize), 3)
+                .unwrap_or_else(|| panic!("rarities={order} raised={raised} scale={scale}"));
+            for (j, (c, cw, ch)) in fitted.iter().enumerate() {
+                let (x, y, _) = positions[j];
+                let y = y - if raised == j { 30.0 } else { 0.0 };
+                assert!((c.cx - x * scale).abs() < 7.0 * scale && (c.cy - y * scale).abs() < 7.0 * scale,
+                    "rarities={order} raised={raised} scale={scale} slot={j}: {c:?}");
+                assert!((*cw - 225.0 * scale).abs() < 7.0 * scale && (*ch - 302.0 * scale).abs() < 7.0 * scale,
+                    "rarities={order} raised={raised} scale={scale}: {cw}x{ch}");
+            }
+        } } }
     }
 
     #[test]

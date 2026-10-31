@@ -225,8 +225,10 @@ impl Pipeline {
 
     fn align_card(&self, plan: &mut Plan, advice: &Advice) {
         if plan.card.is_some() {
-            if let (Some(frames), vorax::advisor::Best::Card(card)) = (&self.card_frames, &advice.best) {
-                plan.card = frames.get(card.index).copied();
+            if let vorax::advisor::Best::Card(card) = &advice.best {
+                // A failed fit must not silently draw the smaller OCR crop as a card outline.
+                // The numbered recommendation and tank marks remain usable without a card box.
+                plan.card = self.card_frames.as_ref().and_then(|frames| frames.get(card.index).copied());
             }
         }
     }
@@ -418,6 +420,22 @@ mod tests {
     }
 
     #[test]
+    fn unmeasured_geometry_keeps_advice_without_drawing_an_ocr_crop() {
+        use super::*;
+        let frame = decode_png(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames/potion-round3-ko-1080p.png")).unwrap();
+        let mut pipe = Pipeline::new(3);
+        let mut titles = ["Targeted Xeno-Hormone", "Osteolytic Ointment", "Mutagenic Powder"].into_iter();
+        let mut read = |_: &Img| vorax_scan::korean::name(titles.next().unwrap()).to_owned();
+        let Outcome::Advice { plan, .. } = pipe.run(&frame, None, Some(&mut read)) else { panic!("round three must be readable") };
+        assert!(plan.card.is_some());
+        pipe.card_frames = None;
+        let (fallback, ..) = pipe.readvise().unwrap();
+        assert!(fallback.card.is_none());
+        assert!(fallback.pill.is_some());
+        assert_eq!(fallback.tanks, plan.tanks);
+    }
+
+    #[test]
     fn an_unread_reroll_counter_cannot_suggest_spending_it() {
         use super::*;
         let frame = decode_png(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames/board-1080p.png")).unwrap();
@@ -462,6 +480,7 @@ mod tests {
             ("instrument-ko-1080p.png", ["Canine Teeth File", "Vermicular Spinal Cord", "Beak of the Twice-Born"], 1, 1),
             ("instrument-selected-ko-1080p.png", ["Tanned Leather Restraint", "Black Goat Gut Suture", "Vermicular Spinal Cord"], 2, 1),
             ("potion-round2-ko-1080p.png", ["Vivigenic Powder", "Twin Hormone - Bone Sentry", "Digestive Enzyme Solution"], 3, 2),
+            ("potion-round3-ko-1080p.png", ["Targeted Xeno-Hormone", "Osteolytic Ointment", "Mutagenic Powder"], 3, 3),
         ] {
             let frame = decode_png(&root.join(file)).unwrap();
             let mut read = |crop: &Img| ocr.read(crop).unwrap();

@@ -9,7 +9,7 @@ namespace Tartarus.App;
 /// <summary>The portable companion format, shared with deterministic updater tests.</summary>
 public static class UpdatePackage
 {
-    public const string VersionNumber = "1.0.4";
+    public const string VersionNumber = "1.0.5";
     public const string Repository = "kinam-ssafy/torchlight-overlay";
     public const string FolderName = "TorchlightHelper-KO";
     public const string Executable = "TorchlightHelper.exe";
