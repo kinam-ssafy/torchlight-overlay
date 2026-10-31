@@ -84,15 +84,25 @@ fn otsu(img: &Img, r: &Rect, use_px: impl Fn(u8, u8, u8) -> bool) -> f64 {
     at as f64
 }
 
-fn test_for(img: &Img, r: &Rect, kind: TextKind) -> Box<dyn Fn(u8, u8, u8) -> bool> {
+fn test_for(img: &Img, r: &Rect, kind: TextKind, adaptive: bool) -> Box<dyn Fn(u8, u8, u8) -> bool> {
+    let mut peak = 0.0f64;
+    if adaptive {
+        let (x0, y0, x1, y1) = span(img, r);
+        for y in y0..y1 { for x in x0..x1 {
+            let (rr, gg, bb) = img.px(x, y);
+            let (_, s, v) = hsv(rr, gg, bb);
+            if (kind == TextKind::Round && s > 0.2 && rr >= gg && gg >= bb)
+                || (kind == TextKind::Refresh && s < 0.35) { peak = peak.max(v); }
+        } }
+    }
     match kind {
-        TextKind::Round => Box::new(|r, g, b| {
+        TextKind::Round => Box::new(move |r, g, b| {
             let (_, s, v) = hsv(r, g, b);
-            s > 0.2 && v > 0.45 && r >= g && g >= b
+            s > 0.2 && v > if adaptive { peak * 0.75 } else { 0.45 } && r >= g && g >= b
         }),
-        TextKind::Refresh => Box::new(|r, g, b| {
+        TextKind::Refresh => Box::new(move |r, g, b| {
             let (_, s, v) = hsv(r, g, b);
-            s < 0.35 && v > 0.6
+            s < 0.35 && v > if adaptive { peak * 0.67 } else { 0.6 }
         }),
         TextKind::Label => {
             let t = 60f64.max(0.7 * otsu(img, r, |r, g, b| !is_red(r, g, b)));
@@ -109,7 +119,11 @@ fn median(v: &[f64]) -> f64 {
 
 /// Glyph boxes in a rect, left to right: runs of columns holding text pixels within the text's own row.
 pub fn glyphs(img: &Img, r: &Rect, kind: TextKind) -> Vec<Rect> {
-    let test = test_for(img, r, kind);
+    counter_glyphs(img, r, kind, false)
+}
+
+fn counter_glyphs(img: &Img, r: &Rect, kind: TextKind, adaptive: bool) -> Vec<Rect> {
+    let test = test_for(img, r, kind, adaptive);
     let (x0, y0, x1, y1) = span(img, r);
     if x1 <= x0 || y1 <= y0 {
         return vec![];
@@ -141,6 +155,12 @@ pub fn glyphs(img: &Img, r: &Rect, kind: TextKind) -> Vec<Rect> {
     }
     while bottom < h - 1 && rows[bottom + 1] > 0 {
         bottom += 1;
+    }
+    if adaptive && kind == TextKind::Refresh {
+        // The die can be brighter and taller than the number. Segment complete columns and
+        // select the rightmost digit below, rather than choosing the die's strongest row.
+        top = 0;
+        bottom = h - 1;
     }
     let mut out: Vec<Rect> = Vec::new();
     let mut start: isize = -1;
@@ -175,7 +195,8 @@ pub fn glyphs(img: &Img, r: &Rect, kind: TextKind) -> Vec<Rect> {
     }
     if kind == TextKind::Refresh {
         let hf = h as f64;
-        return out.into_iter().filter(|g| g.h >= 0.25 * hf && g.h <= 0.5 * hf).last().into_iter().collect();
+        let max_height = if adaptive { 0.85 } else { 0.5 };
+        return out.into_iter().filter(|g| g.h >= 0.25 * hf && g.h <= max_height * hf).last().into_iter().collect();
     }
     let tall = out.iter().fold(0.0f64, |m, g| m.max(g.h));
     let mut widths: Vec<f64> = out.iter().map(|g| g.w).collect();
@@ -322,13 +343,24 @@ pub struct TextRead {
 /// The characters in a rect, with the mean best and runner-up match scores (1 = identical).
 pub fn read_text(img: &Img, g: &[f32], r: &Rect, kind: TextKind, refs: &IndexMap<String, Vec<Vec<f64>>>) -> Option<TextRead> {
     let gs = glyphs(img, r, kind);
+    read_glyphs(img, g, &gs, refs)
+}
+
+/// Recover complete counter glyphs under brightness changes. The character matcher and its acceptance
+/// threshold are unchanged; only foreground segmentation uses the local text's brightness.
+pub fn read_counter(img: &Img, g: &[f32], r: &Rect, kind: TextKind, refs: &IndexMap<String, Vec<Vec<f64>>>) -> Option<TextRead> {
+    let gs = counter_glyphs(img, r, kind, true);
+    read_glyphs(img, g, &gs, refs)
+}
+
+fn read_glyphs(img: &Img, g: &[f32], gs: &[Rect], refs: &IndexMap<String, Vec<Vec<f64>>>) -> Option<TextRead> {
     if gs.is_empty() {
         return None;
     }
     let line_h = gs.iter().fold(f64::NEG_INFINITY, |m, b| m.max(b.h));
     let (mut text, mut score, mut second) = (String::new(), 0.0, 0.0);
     let mut alts = Vec::new();
-    for b in &gs {
+    for b in gs {
         let v = glyph_vector(g, img.width, img.height, b, line_h);
         let mut best: Vec<(char, f64)> = refs
             .iter()

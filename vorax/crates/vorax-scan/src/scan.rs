@@ -9,7 +9,7 @@ use crate::levels::{normal_colours, read_areas};
 use crate::pixels::{gray, js_round, Img};
 use crate::reading::{empty_state, FieldRead, Fields, Frame, Problem, ReadDebug, Reading};
 use crate::tanks::read_tank;
-use crate::text::{read_text, TextKind};
+use crate::text::{read_counter, read_text, TextKind};
 use vorax::advisor::ScreenPhase;
 
 const DIGIT_MIN: f64 = 0.75;
@@ -144,7 +144,19 @@ pub fn scan_with(captured: &Img, data: &ScanData, pictures: bool, hand_dy: Optio
         shelley: None,
     };
 
-    let round = read_text(img, &g, &l.round, TextKind::Round, &data.digits["round"]);
+    // Localized counters extend above the original band. Keep its bottom fixed so the activity
+    // label below cannot become a digit, and keep the denominator outside the right edge.
+    let mut round = read_text(img, &g, &l.round, TextKind::Round, &data.digits["round"]);
+    if !upstream && round.as_ref().is_none_or(|r| r.score < DIGIT_MIN
+        || r.text.parse::<u32>().map_or(true, |n| !(1..=13).contains(&n))) {
+        let mut round_band = l.round;
+        round_band.y -= 20.0 * l.k;
+        round_band.h += 20.0 * l.k;
+        if let Some(full) = read_counter(img, &g, &round_band, TextKind::Round, &data.digits["round"])
+            .filter(|r| r.score >= DIGIT_MIN && r.text.parse::<u32>().is_ok_and(|n| (1..=13).contains(&n))) {
+            round = Some(full);
+        }
+    }
     let n: f64 = round.as_ref().and_then(|r| (!r.text.is_empty()).then(|| r.text.parse::<f64>().unwrap_or(f64::NAN))).unwrap_or(if round.is_some() { 0.0 } else { f64::NAN });
     let round_ok = round.as_ref().is_some_and(|r| n.fract() == 0.0 && (1.0..=13.0).contains(&n) && r.score >= DIGIT_MIN);
     state.round = Some(if round_ok { n as i32 } else { 1 });
@@ -163,6 +175,17 @@ pub fn scan_with(captured: &Img, data: &ScanData, pictures: bool, hand_dy: Optio
             if let Some(wider) = read_text(img, &g, &band, TextKind::Refresh, &data.digits["refresh"])
                 .filter(|r| r.text.len() == 1 && r.score >= DIGIT_MIN) {
                 rf = Some(wider);
+            } else {
+                // Exclude the pet portrait/die and include the full digit height. Their bright
+                // pixels otherwise select a different text row, especially after a brightness change.
+                band.x += 80.0 * l.k;
+                band.w -= 80.0 * l.k;
+                band.y -= 8.0 * l.k;
+                band.h += 16.0 * l.k;
+                if let Some(counter) = read_counter(img, &g, &band, TextKind::Refresh, &data.digits["refresh"])
+                    .filter(|r| r.text.len() == 1 && r.score >= DIGIT_MIN) {
+                    rf = Some(counter);
+                }
             }
         }
         let left: f64 = rf.as_ref().map_or(f64::NAN, |r| if r.text.is_empty() { 0.0 } else { r.text.parse::<f64>().unwrap_or(f64::NAN) });

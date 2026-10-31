@@ -8,7 +8,7 @@
 
 ## 설치와 실행
 
-1. Releases에서 `TorchlightHelper-KO-1.0.3-win-x64.zip`을 받습니다. GitHub의 `Source code` ZIP은 실행용이 아닙니다.
+1. Releases에서 `TorchlightHelper-KO-1.0.4-win-x64.zip`을 받습니다. GitHub의 `Source code` ZIP은 실행용이 아닙니다.
 2. ZIP **전체를** 쓰기 가능한 폴더에 압축 해제합니다.
 3. `TorchlightHelper.exe`를 실행합니다. .NET 런타임과 타르타로스 한국어 OCR 모델이 포함되어 있습니다.
 4. 기존 TartarusSolver 등 동일 단축키를 사용하는 도구는 종료합니다.
@@ -37,7 +37,11 @@ Windows 10/11 x64용입니다. 자동 인식을 사용하려면 게임의 계정
 - `다시 인식` 또는 `Ctrl+Alt+X`로 현재 화면을 다시 읽습니다. `Ctrl+Alt+V`로 오버레이를 숨기거나 표시합니다.
 - 읽지 못한 카드나 수치가 있으면 추천을 숨기고 자동으로 재시도합니다. 가리는 툴팁을 치우면 다시 추천하며, 빠른 재시도 후에는 3초 간격으로 확인합니다.
 
-금색과 파란색 카드 제목의 한국어 OCR, 한국어 카드 크기에 맞춘 테두리 정렬을 보완했습니다. Windows 한국어 OCR이 없으면 이미지 인식으로 보완하지만 카드 인식률이 낮아질 수 있습니다.
+한국어 OCR은 설명문을 제외한 제목 영역을 먼저 확대해 읽고, 불확실한 카드에만 다른 대비 처리를 적용합니다. 한글은 초성·중성·종성의 일치 정도로 비교하며 카드별 오타 예외나 낮춘 판별 임계값은 사용하지 않습니다. 금색과 파란색 카드 및 한국어 카드 크기에 맞춘 테두리 정렬을 보완했습니다. Windows 한국어 OCR이 없으면 이미지 인식으로 보완하지만 카드 인식률이 낮아질 수 있습니다.
+
+1.0.4부터 제목 읽기와 테두리 표시는 같은 카드 경계를 사용합니다. 선택해서 위로 올라간 카드, 회색 테두리, 펫에 가린 아래쪽 경계를 처리하고, 라운드 숫자와 보유 도구도 함께 확인합니다. 진행 중 재실행하면 확실히 읽힌 보유 도구를 복원하며, 도구 인식이 불확실한 경우에는 잘못된 조건으로 계산하지 않습니다.
+
+![보유 도구 세 개를 복원한 2라운드 추천](docs/images/vorax-round2.png)
 
 ## 타르타로스
 
@@ -79,7 +83,7 @@ Windows 10/11 x64용입니다. 자동 인식을 사용하려면 게임의 계정
 
 `시작할 때 확인`을 선택하면 실행 시 새 버전 유무만 확인합니다. 설치는 버튼과 확인 대화상자를 거쳐 진행하며 GitHub 로그인은 필요하지 않습니다. 업데이트 기능은 [GitHub 공식 릴리스 API](https://docs.github.com/en/rest/releases/releases#get-the-latest-release)를 사용하며 게임 화면이나 로그를 전송하지 않습니다.
 
-**1.0.2 이하 버전은 이번 1.0.3 ZIP을 한 번 수동으로 받아야 합니다.** 기존 프로그램을 종료하고 새 폴더에 압축을 푼 다음 기존 `user-data`를 옮기면 설정을 이어서 쓸 수 있습니다. 이후 버전부터 프로그램 안에서 업데이트할 수 있습니다.
+**1.0.2 이하 버전은 최신 ZIP을 한 번 수동으로 받아야 합니다.** 기존 프로그램을 종료하고 새 폴더에 압축을 푼 다음 기존 `user-data`를 옮기면 설정을 이어서 쓸 수 있습니다. 1.0.3 이상에서는 프로그램 안에서 업데이트할 수 있습니다.
 
 ## 빌드와 출처
 
@@ -98,7 +102,10 @@ python package.py
 
 ```powershell
 cargo test --release --workspace --manifest-path vorax/Cargo.toml
+cargo test --release --manifest-path vorax/Cargo.toml -p vorax-overlay recorded_korean_run_with_real_windows_ocr -- --ignored --nocapture
 dotnet test tartarus/tests/Tartarus.Rules.Tests/Tartarus.Rules.Tests.csproj -c Release -p:Platform=x64
 ```
+
+두 번째 Rust 명령은 Windows 한국어 OCR 모델이 설치된 환경에서 실제 한국어 화면 다섯 장을 연속으로 읽습니다. 기본 테스트의 대체가 아닌 추가 통합 검사입니다.
 
 [라이선스와 종속성 고지](THIRD_PARTY_NOTICES.md)를 유지해 주세요. 게임명과 게임 자산은 권리자에게 귀속됩니다. 이 프로젝트는 비공식 팬 도구이며 게임 제작사의 공식 제품이 아닙니다.

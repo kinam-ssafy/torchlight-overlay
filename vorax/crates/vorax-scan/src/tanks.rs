@@ -213,7 +213,15 @@ pub fn read_tank(img: &Img, g: &[f32], l: &Layout, i: usize, data: &ScanData, gl
     let rgb = brightest(img, &l.name_band[i]);
     // Math.max(...rgb) < NAME_MIN, where a NaN (a band off the picture) makes it false
     let max = if rgb.iter().any(|v| v.is_nan()) { f64::NAN } else { rgb[0].max(rgb[1]).max(rgb[2]) };
-    if max < NAME_MIN || (glow && empty_glow(rgb)) {
+    let refs = &data.digits["label"];
+    // A dim normal name is not proof of an empty tank. Two independently legible numeric lines
+    // whose product agrees are stronger evidence; never use fuzzy reconciliation to invent presence.
+    let dim_stats = if glow && (80.0..NAME_MIN).contains(&max) && !empty_glow(rgb) {
+        read_text(img, g, &l.total_band[i], TextKind::Label, refs)
+            .zip(read_text(img, g, &l.aq_band[i], TextKind::Label, refs))
+            .filter(|(t,a)| t.score >= 0.85 && a.score >= 0.85 && stats(Some(&t.text),Some(&a.text)).2)
+    } else { None };
+    if (max < NAME_MIN && dim_stats.is_none()) || (glow && empty_glow(rgb)) {
         fields.insert(format!("tank{i}.empty"), FieldRead::sure(true));
         return TankRead { monster: None, fields, debug: None };
     }
@@ -222,9 +230,10 @@ pub fn read_tank(img: &Img, g: &[f32], l: &Layout, i: usize, data: &ScanData, gl
     let (archetype, a_sure) = archetype_of(img, &l.icon[i]);
     fields.insert(format!("tank{i}.archetype"), FieldRead { sure: a_sure, guess: Some(archetype_name(archetype).into()), ..Default::default() });
 
-    let refs = &data.digits["label"];
-    let total = read_text(img, g, &l.total_band[i], TextKind::Label, refs);
-    let aq = read_text(img, g, &l.aq_band[i], TextKind::Label, refs);
+    let (total, aq) = match dim_stats {
+        Some((t,a)) => (Some(t),Some(a)),
+        None => (read_text(img, g, &l.total_band[i], TextKind::Label, refs), read_text(img, g, &l.aq_band[i], TextKind::Label, refs)),
+    };
     let mut st = stats(total.as_ref().map(|t| t.text.as_str()), aq.as_ref().map(|t| t.text.as_str()));
     let fix = if !st.2 { if let (Some(t), Some(a)) = (&total, &aq) { reconcile(&t.alts, &a.alts) } else { None } } else { None };
     if let Some((t, a)) = &fix {

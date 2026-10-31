@@ -17,13 +17,16 @@ fn letters(t: &str) -> Vec<char> {
 }
 
 /// For each start of p, the fewest edits that match it somewhere inside t.
-fn prefix_costs(p: &[char], t: &[char]) -> Vec<usize> {
+fn prefix_costs(p: &[char], t: &[char], korean: bool) -> Vec<usize> {
+    let step = if korean { 2 } else { 1 };
     let mut prev = vec![0usize; t.len() + 1];
     let mut best = vec![0];
     for i in 1..=p.len() {
-        let mut row = vec![i; t.len() + 1];
+        let mut row = vec![i * step; t.len() + 1];
         for j in 1..=t.len() {
-            row[j] = (prev[j] + 1).min(row[j - 1] + 1).min(prev[j - 1] + usize::from(p[i - 1] != t[j - 1]));
+            let change = if p[i - 1] == t[j - 1] { 0 }
+                else if korean && crate::korean::one_jamo_apart(p[i - 1], t[j - 1]) { 1 } else { step };
+            row[j] = (prev[j] + step).min(row[j - 1] + step).min(prev[j - 1] + change);
         }
         best.push(*row.iter().min().unwrap());
         prev = row;
@@ -40,15 +43,17 @@ pub fn name_fit(name: &str, text: &str) -> f64 {
         if !local.chars().any(crate::korean::hangul) { return f64::NEG_INFINITY; }
         let expand = |s: &str| letters(s).into_iter().flat_map(|c| [c, c]).collect::<Vec<_>>();
         let (p, t) = (expand(local), expand(text));
-        let costs = prefix_costs(&p, &t);
-        return (p.len().min(6)..=p.len()).map(|i| i as f64 - 2.0 * costs[i] as f64 - 0.5 * (p.len() - i) as f64).fold(f64::NEG_INFINITY, f64::max);
+        // Compare the three components of Hangul syllables. A single misread consonant or vowel
+        // loses half a syllable, not the entire syllable; minimum evidence and runner-up gap stay fixed.
+        let costs = prefix_costs(&p, &t, true);
+        return (p.len().min(6)..=p.len()).map(|i| i as f64 - costs[i] as f64 - 0.5 * (p.len() - i) as f64).fold(f64::NEG_INFINITY, f64::max);
     }
     let p = letters(name);
     let t = letters(text);
     if t.is_empty() {
         return f64::NEG_INFINITY;
     }
-    let c = prefix_costs(&p, &t);
+    let c = prefix_costs(&p, &t, false);
     let mut q = f64::NEG_INFINITY;
     for i in p.len().min(6)..=p.len() {
         q = q.max(i as f64 - 2.0 * c[i] as f64 - 0.5 * (p.len() - i) as f64);
@@ -105,6 +110,23 @@ pub fn title_crop_gold(img: &Img, c: &CardPos, k: f64, threshold: u8) -> Img {
     out
 }
 
+/// Keep description lines out of the Korean heading OCR. The broader upstream crop joins small
+/// Hangul strokes with nearby text; a three-times heading and higher contrast preserve those gaps.
+pub fn title_crop_heading(img: &Img, c: &CardPos, k: f64) -> Img {
+    heading_at(img, c, k, 90)
+}
+
+fn heading_at(img: &Img, c: &CardPos, k: f64, threshold: u8) -> Img {
+    let zoom = 3.0;
+    let r = Rect::new(-140.0 * zoom, -90.0 * zoom, 280.0 * zoom, 55.0 * zoom);
+    let mut out = patch(img, c.cx, c.cy, c.angle, r, k / zoom);
+    for p in out.data.chunks_exact_mut(4) {
+        let v = if p[2] >= threshold { 0 } else { 255 };
+        p[0] = v; p[1] = v; p[2] = v; p[3] = 255;
+    }
+    out
+}
+
 fn names_for<'a>(data: &'a ScanData, phase: &str) -> &'a [String] {
     match phase {
         "potion" => &data.names.potion,
@@ -152,12 +174,12 @@ const PHASES: [&str; 3] = ["potion", "instrument", "protocol"];
 /// The reading with each card's printed name added. `read_text` reads a title crop (OCR); `pictures` matches
 /// the cards whose names can't be settled, when the reading left them out.
 pub fn read_titles(img: &Img, reading: Reading, data: &ScanData, read_text: &mut dyn FnMut(&Img) -> String, pictures_of: Option<&dyn Fn(&str, usize, &[usize]) -> HashMap<usize, PictureRead>>) -> Reading {
-    read_titles_styled(img, reading, data, read_text, pictures_of, false)
+    read_titles_styled(img, reading, data, read_text, pictures_of, false, None)
 }
 
 /// Korean's gold headings are fastest and clearest in the blue-channel mask. The original adaptive
 /// contrast remains the fallback, and the default entry point preserves the upstream reading contract.
-pub fn read_titles_styled(img: &Img, reading: Reading, data: &ScanData, read_text: &mut dyn FnMut(&Img) -> String, pictures_of: Option<&dyn Fn(&str, usize, &[usize]) -> HashMap<usize, PictureRead>>, gold_first: bool) -> Reading {
+pub fn read_titles_styled(img: &Img, reading: Reading, data: &ScanData, read_text: &mut dyn FnMut(&Img) -> String, pictures_of: Option<&dyn Fn(&str, usize, &[usize]) -> HashMap<usize, PictureRead>>, gold_first: bool, positions: Option<&[CardPos]>) -> Reading {
     let read = reading.hand_ranks.as_ref().map_or(0, |r| r.len());
     if (read == 0 && reading.hand_pending != Some(true)) || reading.has(|p| matches!(p, Problem::NotFound | Problem::Animating)) {
         return reading;
@@ -170,7 +192,16 @@ pub fn read_titles_styled(img: &Img, reading: Reading, data: &ScanData, read_tex
     };
     let phases: Vec<&str> = if reading.fields.get("phase").is_some_and(|f| f.sure) { vec![header] } else { PHASES.to_vec() };
     let size = if read > 0 { read } else { reading.hand_size.unwrap_or(3) };
-    let texts: Vec<String> = l.hand_at(size).iter().map(|c| {
+    let pos = positions.filter(|p| p.len() == size).unwrap_or_else(|| l.hand_at(size));
+    let texts: Vec<String> = pos.iter().map(|c| {
+        if gold_first {
+            let heading = read_text(&title_crop_heading(img, c, l.k));
+            if phases.iter().any(|phase| settled(&ranked(data, phase, &heading))) { return heading; }
+            for threshold in [70, 50] {
+                let dim = read_text(&heading_at(img, c, l.k, threshold));
+                if phases.iter().any(|phase| settled(&ranked(data, phase, &dim))) { return dim; }
+            }
+        }
         let text = read_text(&if gold_first { title_crop_gold(img, c, l.k, 70) } else { title_crop(img, c, l.k) });
         if (gold_first || text.chars().any(crate::korean::hangul)) && !phases.iter().any(|phase| settled(&ranked(data, phase, &text))) {
             let adaptive = title_crop(img, c, l.k);
@@ -197,7 +228,6 @@ pub fn read_titles_styled(img: &Img, reading: Reading, data: &ScanData, read_tex
         }
     }
     let (phase, slots, _) = best.unwrap();
-    let pos = l.hand_at(size);
 
     let need: Vec<usize> = slots.iter().enumerate().filter(|(_, r)| !settled(r)).map(|(j, _)| j).collect();
     let from_reading = read == size && phase == header;

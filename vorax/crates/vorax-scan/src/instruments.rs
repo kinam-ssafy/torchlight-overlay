@@ -119,10 +119,64 @@ pub struct InstrumentsRead {
 }
 
 pub fn read_instruments(img: &Img, l: &Layout, data: &ScanData) -> InstrumentsRead {
+    read_icons_at(img, &l.instrument_icon, data, false)
+}
+
+/// Localized panels space their icons differently. Locate separated foreground clusters in the
+/// existing icon strip, then accept them only when every normal icon passes the original matcher.
+pub fn refine_instruments(img: &Img, l: &Layout, data: &ScanData) -> Option<InstrumentsRead> {
+    let first = l.instrument_icon.first()?;
+    let last = l.instrument_icon.last()?;
+    let x0 = (last.x - 60.0 * l.k).max(0.0) as usize;
+    let x1 = (first.x + first.w + 40.0 * l.k).min(img.width as f64) as usize;
+    let y0 = first.y.max(0.0) as usize;
+    let y1 = (first.y + first.h + 8.0 * l.k).min(img.height as f64) as usize;
+    let peak = (y0..y1).flat_map(|y| (x0..x1).map(move |x| img.px(x,y)))
+        .map(|(r,g,b)| r.max(g).max(b)).max().unwrap_or(0);
+    let foreground = (peak as f64 * 0.20).max(DARK as f64) as u8;
+    let mut groups: Vec<(usize, usize)> = vec![];
+    for x in x0..x1 {
+        let count = (y0..y1).filter(|&y| { let (r,g,b) = img.px(x,y); r.max(g).max(b) >= foreground }).count();
+        if count < (3.0 * l.k).ceil() as usize { continue; }
+        if let Some((_, end)) = groups.last_mut().filter(|(_, end)| (x - *end) as f64 <= 16.0 * l.k) { *end = x; }
+        else { groups.push((x,x)); }
+    }
+    // Isolated bright scenery pixels are not icon components, particularly after downsampling.
+    groups.retain(|(a,b)| (*b-*a+1) as f64 >= 12.0*l.k);
+    if groups.is_empty() || groups.len() > l.instrument_icon.len() { return None; }
+    if groups.iter().any(|(a,b)| (*b-*a+1) as f64 > 100.0*l.k) { return None; }
+    let rects: Vec<_> = groups.iter().rev().map(|(a,b)| Rect::new((*a+*b) as f64/2.0-first.w/2.0, first.y, first.w, first.h)).collect();
+    let read = read_icons_at(img, &rects, data, true);
+    (read.names.len() == rects.len() && read.fields.values().all(|f| f.sure)).then_some(read)
+}
+
+/// One-pixel wires alias when reduced to the 24x24 reference grid. Compare their low-frequency
+/// shape as a second check; never use this to change the normal matcher's winning identity.
+fn softened(v: &[f64]) -> Vec<f64> {
+    let mut out = vec![0.0; N * N];
+    for y in 0..N {
+        for x in 0..N {
+            let mut count = 0.0;
+            for yy in y.saturating_sub(1)..=(y + 1).min(N - 1) {
+                for xx in x.saturating_sub(1)..=(x + 1).min(N - 1) {
+                    out[y * N + x] += v[yy * N + xx];
+                    count += 1.0;
+                }
+            }
+            out[y * N + x] /= count;
+        }
+    }
+    let mean = out.iter().sum::<f64>() / out.len() as f64;
+    let norm = out.iter().map(|x| (x - mean).powi(2)).sum::<f64>().sqrt().max(f64::EPSILON);
+    for x in &mut out { *x = (*x - mean) / norm; }
+    out
+}
+
+fn read_icons_at(img: &Img, rects: &[Rect], data: &ScanData, refine: bool) -> InstrumentsRead {
     let mut from_right: Vec<String> = Vec::new();
     let mut reads: Vec<FieldRead> = Vec::new();
     let mut ranks_from_right: Ranks = Vec::new();
-    for r in &l.instrument_icon {
+    for r in rects {
         if !holds_an_icon(img, r) {
             break;
         }
@@ -135,6 +189,18 @@ pub fn read_instruments(img: &Img, l: &Layout, data: &ScanData) -> InstrumentsRe
             .map(|(n, vs)| (n.clone(), vs.iter().map(|v| icon_similarity(v, &p, &mut lined)).fold(f64::NEG_INFINITY, f64::max)))
             .collect();
         ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        if refine && (ranked[0].1 < ICON_MIN || ranked[0].1 - ranked.get(1).map_or(0.0, |x| x.1) < ICON_GAP) {
+            let soft = softened(&p);
+            let mut cache = HashMap::new();
+            let mut stable: Vec<_> = data.icons.iter().filter(|(n, _)| n.as_str() != "none")
+                .map(|(n, vs)| (n.clone(), vs.iter().filter(|v| v.len() == N * N)
+                    .map(|v| icon_similarity(&softened(v), &soft, &mut cache)).fold(-1.0, f64::max))).collect();
+            stable.sort_by(|a, b| b.1.total_cmp(&a.1));
+            if stable[0].0 == ranked[0].0 && stable[0].1 >= 0.90
+                && stable[0].1 - stable.get(1).map_or(0.0, |x| x.1) >= 0.12 {
+                ranked = stable;
+            }
+        }
         if ranked[0].0 == STARTING_ITEM {
             continue;
         }
