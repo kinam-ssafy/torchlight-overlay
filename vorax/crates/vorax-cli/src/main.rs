@@ -13,6 +13,7 @@
 //!       a sequential test on the champion's seeds: stops as soon as the challenger is clearly better or not
 //! Data: what the build embedded (data/). --model <model.json|none> on any command uses another board value
 //! (none: boards judged by their score); for train, it's the board value the training games are played by.
+//! --potion-refreshes N and --instrument-refreshes N set the starting rerolls for simulation/training (0..9).
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -33,9 +34,20 @@ fn main() {
     if let Some(n) = arg::<usize>(&args, "--threads") {
         rayon::ThreadPoolBuilder::new().num_threads(n).build_global().ok();
     }
-    if let Some(m) = arg::<String>(&args, "--model") {
-        let json = (m != "none").then(|| std::fs::read_to_string(&m).unwrap_or_else(|e| fail(&format!("{m}: {e}"))));
-        vorax::data::use_model(json.as_deref()).unwrap_or_else(|e| fail(&e));
+    let model = arg::<String>(&args, "--model").map(|m| if m == "none" { "null".into() }
+        else { std::fs::read_to_string(&m).unwrap_or_else(|e| fail(&format!("{m}: {e}"))) });
+    let settings = if args.iter().any(|a| a == "--potion-refreshes" || a == "--instrument-refreshes") {
+        let default = vorax::Data::embedded().unwrap().default_settings;
+        let count = |name, fallback| {
+            let n = if args.iter().any(|a| a == name) { arg::<i32>(&args, name).unwrap_or_else(|| fail("rerolls require an integer between 0 and 9")) } else { fallback };
+            if !(0..=9).contains(&n) { fail("rerolls must be between 0 and 9"); }
+            n
+        };
+        Some(vorax::Settings { potion_refreshes: count("--potion-refreshes",default.potion_refreshes),
+            instrument_refreshes: count("--instrument-refreshes",default.instrument_refreshes) })
+    } else { None };
+    if model.is_some() || settings.is_some() {
+        vorax::data::configure(model.as_deref(), settings).unwrap_or_else(|e| fail(&e));
     }
     match cmd {
         "advise" => advise(&args[1..]),
@@ -58,7 +70,7 @@ fn main() {
             _ => fail("usage: vorax gate champion.txt challenger.txt"),
         },
         _ => {
-            eprintln!("usage: vorax advise [screen.json] [--futures N] [--goal target|mean] [--quick] [--single] | bench [fixtures] | sim [--games N] [--seed0 S] [--policy value|steer|solver|oracle] [--futures N] [--goal target|mean] [--scores out.txt] | info | train [--games N] --out model.json | gate a.txt b.txt   (--threads N, --model m.json|none on any)");
+            eprintln!("usage: vorax advise [screen.json] [--futures N] [--goal target|mean] [--quick] [--single] | bench [fixtures] | sim [--games N] [--seed0 S] [--policy value|steer|solver|oracle] [--futures N] [--goal target|mean] [--scores out.txt] [--outcomes out.json] | info | train [--games N] --out model.json | gate a.txt b.txt   (--threads N, --model m.json|none, --potion-refreshes N, --instrument-refreshes N on any)");
             std::process::exit(if cmd == "help" || cmd == "--help" { 0 } else { 2 });
         }
     }
@@ -164,8 +176,13 @@ fn sim(args: &[String]) {
         return train::duel(&champion, &chooser, &picker, most, arg(args, "--p1").unwrap_or(0.55), out.as_deref());
     }
     let t = Instant::now();
-    let by_seed = train::scores(games, seed0, &chooser, &picker);
+    let outcomes = train::outcomes(games, seed0, &chooser, &picker);
+    let by_seed: Vec<_> = outcomes.iter().map(|g| (g.seed, g.score)).collect();
     let secs = t.elapsed().as_secs_f64();
+    if let Some(path) = arg::<String>(args, "--outcomes") {
+        let rows: Vec<_> = outcomes.iter().map(|g| serde_json::json!({"seed":g.seed,"score":g.score,"monsters":g.monsters,"groups":g.groups})).collect();
+        std::fs::write(&path, serde_json::to_string(&rows).unwrap()).unwrap_or_else(|e| fail(&format!("{path}: {e}")));
+    }
     if let Some(path) = arg::<String>(args, "--scores") {
         let text: String = by_seed.iter().map(|(seed, score)| format!("{seed} {score}
 ")).collect();

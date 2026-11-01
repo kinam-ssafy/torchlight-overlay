@@ -339,16 +339,7 @@ impl Picker {
             Picker::Mean => value_pick_for(s, Goal::Mean),
             Picker::Board { playouts, rollout, goal, refresh_playouts } => {
                 let r = rank_instruments(s, seed, *playouts, &Chooser::Ev(*rollout), *goal, *refresh_playouts, false);
-                let mut best = 0;
-                for (i, &v) in r.offers.iter().enumerate() {
-                    if v > r.offers[best] {
-                        best = i;
-                    }
-                }
-                match r.refresh {
-                    Some(rv) if rv > r.offers[best] => Pick::Refresh,
-                    _ => Pick::Card(best),
-                }
+                r.best
             }
             Picker::Oracle => {
                 let mut choices: Vec<Pick> = (0..s.hand.len()).map(Pick::Card).collect();
@@ -410,13 +401,38 @@ pub struct Tally {
     pub goal: f64,
     pub reached: u32,
     pub n: u32,
+    /// Final population and occupied tanks; tie-breakers only, never a score penalty.
+    #[serde(default)]
+    pub monsters: f64,
+    #[serde(default)]
+    pub groups: f64,
 }
 
 impl Tally {
+    fn ending(s: &GameState, goal: Goal) -> Self {
+        let ua = ultimate_activity(s);
+        Self { goal: goal.score(ua), reached: (ua >= TARGET) as u32, n: 1,
+            monsters: s.monsters().map(|m| m.quantity as f64).sum(), groups: s.monsters().count() as f64 }
+    }
+
+    /// Higher is better. Combat size cannot trade away expected capped score or success probability.
+    pub fn compare(&self, other: &Self, goal: Goal) -> std::cmp::Ordering {
+        let (a,b)=(self.n.max(1) as f64,other.n.max(1) as f64);
+        let cmp = |x:f64,y:f64| x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal);
+        cmp(self.goal/a,other.goal/b).then_with(|| {
+            if goal != Goal::Target || data().reference_rules { return std::cmp::Ordering::Equal; }
+            cmp(self.reached as f64/a,other.reached as f64/b)
+                .then_with(||cmp(other.monsters/b,self.monsters/a))
+                .then_with(||cmp(other.groups/b,self.groups/a))
+        })
+    }
+
     fn add(&mut self, o: &Tally) {
         self.goal += o.goal;
         self.reached += o.reached;
         self.n += o.n;
+        self.monsters += o.monsters;
+        self.groups += o.groups;
     }
 }
 
@@ -440,7 +456,7 @@ impl Chooser {
             Chooser::Plan(la) => {
                 let best = look_ahead(s, seed, la, false);
                 match best.first() {
-                    Some(a) => Choice { best: Some(a.o), value: if la.goal == Goal::Mean { f64::INFINITY } else { a.now }, stay: None },
+                    Some(a) => Choice { best: Some(a.o), value: if la.goal == Goal::Mean || !data().reference_rules { f64::INFINITY } else { a.now }, stay: None },
                     None => Choice { best: None, value: -1.0, stay: None },
                 }
             }
@@ -482,7 +498,7 @@ pub fn finish(s: &GameState, seed: u32, chooser: &Chooser, picker: &Picker) -> G
         }
         let c = chooser.choose(&s, mix(seed, g));
         // refresh a potion hand only when nothing in it is expected to beat the current board
-        if s.open_box.is_none() && c.value <= c.stay.unwrap_or(ultimate_activity(&s) as f64) && can_refresh(&s) {
+        if (!data().reference_rules || s.open_box.is_none()) && c.value <= c.stay.unwrap_or(ultimate_activity(&s) as f64) && can_refresh(&s) {
             s = dispatch(&s, Action::Refresh);
             continue;
         }
@@ -501,8 +517,7 @@ fn instrument_future(slim: &GameState, seed: u32, c: Pick, rollout: &Chooser, go
         Pick::Refresh => dispatch(&x, Action::Refresh),
         Pick::Card(i) => pick_and_confirm(&x, i),
     };
-    let end = ultimate_activity(&finish(&start, sk, rollout, picker));
-    Tally { goal: goal.score(end), reached: (end >= TARGET) as u32, n: 1 }
+    Tally::ending(&finish(&start, sk, rollout, picker), goal)
 }
 
 /// Futures `from` to `to` (excluded) of each instrument choice, played to the end of the run.
@@ -542,6 +557,7 @@ pub struct InstrumentRanking {
     pub refresh: Option<f64>,
     pub reached: Vec<f64>,
     pub refresh_reached: Option<f64>,
+    pub best: Pick,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -549,7 +565,11 @@ pub fn rank_instruments(s: &GameState, seed: u32, playouts: u32, rollout: &Choos
     let choices: Vec<Pick> = (0..s.hand.len()).map(Pick::Card).collect();
     let each = instrument_futures(s, seed, &choices, rollout, goal, 0, playouts, par);
     let r = can_refresh(s).then(|| instrument_futures(s, seed, &[Pick::Refresh], rollout, goal, 0, refresh_playouts, par)[0]);
+    let mut best = 0;
+    for i in 1..each.len() { if each[i].compare(&each[best],goal).is_gt() { best=i; } }
+    let best = if r.is_some_and(|r| r.compare(&each[best],goal).is_gt()) { Pick::Refresh } else { Pick::Card(best) };
     InstrumentRanking {
+        best,
         offers: each.iter().map(|e| e.goal / e.n as f64).collect(),
         refresh: r.map(|r| r.goal / r.n as f64),
         reached: each.iter().map(|e| e.reached as f64 / e.n as f64).collect(),
@@ -611,7 +631,7 @@ pub fn shortlist(s: &GameState, seed: u32, la: &LookAhead) -> Vec<(Opt, f64)> {
         if !taken { list.push(i); }
     }
     let mut out: Vec<(Opt, f64)> = list.into_iter().map(|i| now[i]).collect();
-    if s.open_box.is_none() && can_refresh(s) {
+    if (!data().reference_rules || s.open_box.is_none()) && can_refresh(s) {
         out.push((Opt::Refresh, ultimate_activity(s) as f64));
     }
     out
@@ -622,8 +642,7 @@ pub fn potion_futures(s: &GameState, seed: u32, la: &LookAhead, opts: &[Opt], fr
     let inner = Chooser::Ev(Policy { samples: la.inner_samples.unwrap_or(2), horizon: 0, roll_samples: None, steer: la.steer, value: la.value, goal: la.goal });
     tallies(opts.len(), from, to, par, |c, k| {
         let sk = mix(seed, 9000 + k);
-        let ua = ultimate_activity(&finish(&play_opt(&reseed(s, sk), &opts[c]), sk, &inner, &la.goal.picker()));
-        Tally { goal: la.goal.score(ua), reached: (ua >= TARGET) as u32, n: 1 }
+        Tally::ending(&finish(&play_opt(&reseed(s, sk), &opts[c]), sk, &inner, &la.goal.picker()), la.goal)
     })
 }
 
@@ -682,9 +701,8 @@ pub fn look_ahead(s: &GameState, seed: u32, la: &LookAhead, par: bool) -> Vec<Ah
         }
     }
     // options dropped early keep their estimate from fewer futures, below the ones kept
-    let mut out: Vec<(u32, Ahead)> = runs.iter().map(|r| (r.t.n, Ahead { o: r.o, now: r.v, goal: mean(r), reached: r.t.reached as f64 / r.t.n as f64 })).collect();
-    out.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.goal.partial_cmp(&a.1.goal).unwrap_or(std::cmp::Ordering::Equal)));
-    out.into_iter().map(|(_, a)| a).collect()
+    runs.sort_by(|a,b| b.t.n.cmp(&a.t.n).then_with(||b.t.compare(&a.t,la.goal)));
+    runs.iter().map(|r| Ahead { o: r.o, now: r.v, goal: mean(r), reached: r.t.reached as f64 / r.t.n as f64 }).collect()
 }
 
 /// One game: `setup` given = sandbox with fixed instruments from round 1; none = everything dealt.
@@ -702,6 +720,7 @@ mod tests {
         let one = |c: usize, k: u32| Tally {
             goal: if k % 7 == 0 { 9_007_199_254_740_992.0 } else { (c + 1) as f64 },
             reached: (k % 3 == 0) as u32, n: 1,
+            ..Tally::default()
         };
         assert_eq!(tallies(5, 11, 2070, false, one), tallies(5, 11, 2070, true, one));
         assert_eq!(tallies(0, 0, 10, true, one), vec![]);

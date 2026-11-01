@@ -8,7 +8,7 @@ use crate::types::*;
 use serde::{Deserialize, Serialize, Serializer};
 use std::time::Instant;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScreenMonster {
     pub archetype: Archetype,
@@ -47,6 +47,9 @@ pub struct ScreenState {
     /// Intern Shelley level (only changes the instrument rerolls a new game starts with)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shelley: Option<i32>,
+    /// The potion kit whose contents are on screen, when established by a same-round transition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_box: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -183,11 +186,15 @@ pub fn to_state(x: &ScreenState, unknown: &mut Vec<String>) -> GameState {
     GameState {
         tanks,
         instruments: equipped,
-        round: x.round.unwrap_or(1),
+        // A reward tool is shown after the printed round's effects have run.
+        // The engine's instrument phase already belongs to the following round.
+        round: x.round.unwrap_or(1) + i32::from(!data().reference_rules && x.phase == ScreenPhase::Instrument && !x.instruments.is_empty()),
         phase: if potion { Phase::PotionSelect } else { Phase::InstrumentSelect },
         hand,
         potion_refreshes: x.potion_refreshes.unwrap_or(0),
         instrument_refreshes: x.instrument_refreshes.unwrap_or(0),
+        open_box: x.open_box.as_deref().and_then(|n| data().potion_by_name(n))
+            .filter(|&id| matches!(data().potion(id).targeting, Targeting::Box(_))),
         // past thresholds only matter for whether more instruments are coming
         t8000: had >= 2,
         t28000: had >= 3,
@@ -342,8 +349,8 @@ pub fn conclude(work: &Work, x: &ScreenState, unknown: Vec<String>, t0: Instant,
     let (s, ranking, best, refresh_end, plan) = match work {
         Work::Potion { s, opts, .. } => {
             // options dropped early by halving (fewer futures) rank below the ones kept
-            let mut ahead: Vec<(Opt, f64, f64, u32)> = opts.iter().zip(tallies).map(|(c, t)| (c.0, mean(t), reached(t), t.n)).collect();
-            ahead.sort_by(|a, b| b.3.cmp(&a.3).then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)));
+            let mut ahead: Vec<(Opt, f64, f64, u32, usize)> = opts.iter().zip(tallies).enumerate().map(|(i,(c,t))| (c.0, mean(t), reached(t), t.n, i)).collect();
+            ahead.sort_by(|a, b| b.3.cmp(&a.3).then_with(|| tallies[b.4].compare(&tallies[a.4],goal)));
             let reroll = ahead.iter().position(|a| a.0 == Opt::Refresh);
             let refresh_end = reroll.map(|i| End { activity: ahead[i].1, reached: ahead[i].2 });
             let ranked: Vec<Ranked> = ahead
@@ -352,14 +359,14 @@ pub fn conclude(work: &Work, x: &ScreenState, unknown: Vec<String>, t0: Instant,
                 .filter(|(i, _)| Some(*i) != reroll)
                 .map(|(_, a)| Ranked { end: Some(End { activity: a.1, reached: a.2 }), ..to_ranked(&a.0, js_round(a.1)) })
                 .collect();
-            let ranking = if goal == Goal::Target {
+            let ranking = if goal == Goal::Target && data().reference_rules {
                 mark_no_effect(s, ranked)
             } else {
                 ranked.into_iter().map(|r| if card_changes(s, r.index, &r.targets) { r } else { Ranked { no_effect: Some(true), ..r } }).collect()
             };
             let mut best = if reroll == Some(0) { Best::Refresh } else { ranking.first().cloned().map_or(Best::Nothing, Best::Card) };
             // a Potion Kit on offer is taken before a refresh
-            if goal == Goal::Target && best == Best::Refresh {
+            if goal == Goal::Target && data().reference_rules && best == Best::Refresh {
                 if let Some(k) = ranking.iter().find(|r| is_kit(s, r.index)) {
                     best = Best::Card(k.clone());
                 }
@@ -375,11 +382,14 @@ pub fn conclude(work: &Work, x: &ScreenState, unknown: Vec<String>, t0: Instant,
                     Pick::Refresh => None,
                 })
                 .collect();
-            let score = |r: &Ranked| if goal == Goal::Mean { r.end.expect("simulated offer").activity } else { r.value };
-            ranking.sort_by(|a, b| score(b).partial_cmp(&score(a)).unwrap_or(std::cmp::Ordering::Equal));
+            let score = |r: &Ranked| if goal == Goal::Mean || !data().reference_rules { r.end.expect("simulated offer").activity } else { r.value };
+            let tally = |r: &Ranked| &tallies[choices.iter().position(|c| *c == Pick::Card(r.index)).unwrap()];
+            ranking.sort_by(|a, b| if data().reference_rules { score(b).partial_cmp(&score(a)).unwrap_or(std::cmp::Ordering::Equal) }
+                else { tally(b).compare(tally(a),goal) });
             let refresh_end = choices.iter().position(|c| *c == Pick::Refresh).map(|r| End { activity: mean(&tallies[r]), reached: reached(&tallies[r]) });
             let best = match (refresh_end, ranking.first()) {
-                (Some(e), Some(top)) if e.activity > score(top) => Best::Refresh,
+                (Some(e), Some(top)) if if data().reference_rules { e.activity > score(top) }
+                    else { tallies[choices.iter().position(|c| *c == Pick::Refresh).unwrap()].compare(tally(top),goal).is_gt() } => Best::Refresh,
                 (_, Some(top)) => Best::Card(top.clone()),
                 (Some(_), None) => Best::Refresh,
                 (None, None) => Best::Nothing,

@@ -59,6 +59,8 @@ pub struct Pipeline {
     pub opening_offer: bool,
     /// instrument rerolls left, as last read on an instrument offer this game (a potion board doesn't show them)
     instrument_refreshes: Option<i32>,
+    /// Potion rerolls are hidden while a tool offer displays its own counter.
+    potion_refreshes: Option<i32>,
     /// the last board advised on, with the size of its picture, for advising again when a setting changes (and
     /// for its round, when the next board's can't be read)
     last: Option<(Reading, usize, usize)>,
@@ -87,9 +89,25 @@ pub fn shelley_rerolls(level: i32) -> i32 {
     [0, 1, 1, 2, 2, 2].get((level - 1).clamp(0, 5) as usize).copied().unwrap_or(0)
 }
 
+/// A kit replaces the offer without advancing the round, changing tanks, or spending
+/// a reroll. Infer that observed transition, never assume the player followed advice.
+fn carry_open_box(before: Option<&vorax::advisor::ScreenState>, now: &mut vorax::advisor::ScreenState) {
+    use vorax::{advisor::ScreenPhase, data::{data, Targeting}};
+    let Some(before) = before else { return };
+    if before.phase != ScreenPhase::Potion || now.phase != ScreenPhase::Potion
+        || before.round != now.round || before.tanks != now.tanks { return; }
+    now.open_box = before.open_box.clone();
+    if before.hand == now.hand || before.potion_refreshes != now.potion_refreshes { return; }
+    let mut kits = before.hand.iter().filter(|name| data().potion_by_name(name).is_some_and(|id|
+        matches!(data().potion(id).targeting, Targeting::Box(n) if n as usize == now.hand.len())));
+    if let Some(kit) = kits.next() {
+        if kits.next().is_none() { now.open_box = Some(kit.clone()); }
+    }
+}
+
 impl Pipeline {
     pub fn new(shelley: i32) -> Pipeline {
-        Pipeline { last_advice: None, display_current: false, card_frames: None, tracker: InstrumentTracker::default(), starting_items: Default::default(), help_icon: None, shelley, opening_offer: false, instrument_refreshes: None, last: None, protocols: false, resumed: false }
+        Pipeline { last_advice: None, display_current: false, card_frames: None, tracker: InstrumentTracker::default(), starting_items: Default::default(), help_icon: None, shelley, opening_offer: false, instrument_refreshes: None, potion_refreshes: None, last: None, protocols: false, resumed: false }
     }
 
     /// The board's instrument rerolls: as read on an instrument offer, else carried from the last one this game,
@@ -97,11 +115,17 @@ impl Pipeline {
     fn fill_rerolls(&mut self, reading: &mut Reading) {
         match reading.state.phase {
             vorax::advisor::ScreenPhase::Instrument => {
+                let opening = reading.state.round == Some(1) && reading.state.instruments.is_empty();
+                reading.state.potion_refreshes = Some(self.potion_refreshes.unwrap_or(if opening { 3 } else { 0 }));
                 if reading.fields.get("refreshes").is_some_and(|f| f.sure) {
                     self.instrument_refreshes = reading.state.instrument_refreshes;
                 }
             }
             _ => {
+                if reading.state.phase == vorax::advisor::ScreenPhase::Potion
+                    && reading.fields.get("refreshes").is_some_and(|f| f.sure) {
+                    self.potion_refreshes = reading.state.potion_refreshes;
+                }
                 if reading.state.instrument_refreshes.is_none() {
                     reading.state.instrument_refreshes = Some(self.instrument_refreshes.unwrap_or(shelley_rerolls(self.shelley)));
                 }
@@ -224,6 +248,7 @@ impl Pipeline {
         let trigger = if self.resumed { None } else { trigger };
         if trigger == Some("screen") {
             self.instrument_refreshes = None;
+            self.potion_refreshes = None;
             self.protocols = false;
         }
         // a new game opens with "screen" and an instrument offer: cards in hand
@@ -265,6 +290,9 @@ impl Pipeline {
         self.fill_rerolls(&mut reading);
         let read_ms = t.elapsed().as_secs_f64() * 1000.0;
         if !trustworthy(&reading) { return Outcome::Uncertain { reading: Box::new(reading) }; }
+        if trigger != Some("screen") {
+            carry_open_box(self.last.as_ref().map(|(r, ..)| &r.state), &mut reading.state);
+        }
         // Like the Tartarus reader, keep the last complete state across partial/covered
         // frames. A failed OCR pass must not replace the offer or invent an owned tool.
         self.tracker = tr.tracker;
@@ -339,7 +367,7 @@ impl Pipeline {
                 return (cached, true);
             }
         }
-        let advice = advise_for_goal(state, Some(count), vorax::bot::Goal::Mean, false, true);
+        let advice = advise_for_goal(state, Some(count), vorax::bot::Goal::Target, false, true);
         self.last_advice = Some((key, count, advice.clone()));
         (advice, false)
     }
@@ -413,6 +441,60 @@ mod tests {
         assert_eq!(shelley_rerolls(2), 1);
         assert_eq!(shelley_rerolls(6), 2);
         assert_eq!(shelley_rerolls(0), 0);
+    }
+
+    #[test]
+    fn tool_counter_does_not_replace_hidden_potion_counter() {
+        use super::*;
+        let mut pipeline=Pipeline::new(3);
+        let mut reading=Reading {
+            state:vorax_scan::reading::empty_state(), fields:Default::default(), problems:vec![],
+            frame:None,instrument_ranks:None,hand_ranks:None,icons_known:None,hand_pending:None,
+            hand_size:None,ui:None,debug:None,hand_dy:None,
+        };
+        reading.fields.insert("refreshes".into(),vorax_scan::reading::FieldRead::sure(true));
+        reading.state.phase=vorax::advisor::ScreenPhase::Instrument;
+        reading.state.potion_refreshes=Some(1); // header classifier initially treated the visible 1 as a potion counter
+        reading.state.instrument_refreshes=Some(1);
+        pipeline.fill_rerolls(&mut reading);
+        assert_eq!(reading.state.potion_refreshes,Some(3));
+        reading.state.phase=vorax::advisor::ScreenPhase::Potion;
+        reading.state.potion_refreshes=Some(0);
+        pipeline.fill_rerolls(&mut reading);
+        reading.state.phase=vorax::advisor::ScreenPhase::Instrument;
+        reading.state.potion_refreshes=Some(1);
+        pipeline.fill_rerolls(&mut reading);
+        assert_eq!(reading.state.potion_refreshes,Some(0));
+        let mut restarted=Pipeline::new(3);
+        reading.state.round=Some(5);
+        reading.state.instruments=vec!["Incubation Sac".into()];
+        restarted.fill_rerolls(&mut reading);
+        assert_eq!(reading.state.potion_refreshes,Some(0),"a restart must not invent hidden rerolls");
+    }
+
+    #[test]
+    fn kit_context_follows_observed_transitions_and_expires_at_next_round() {
+        use super::*;
+        let mut before=vorax_scan::reading::empty_state();
+        before.hand=vec!["Rare Potion Kit (Small)".into(),"Vivigenic Powder".into(),"Xeno-Hormone".into()];
+        let mut now=before.clone();
+        now.hand=vec!["Green Bile Solution".into(),"Twin Hormone - Pest".into(),"Purest Holy Water".into()];
+        carry_open_box(Some(&before),&mut now);
+        assert_eq!(now.open_box.as_deref(),Some("Rare Potion Kit (Small)"));
+        let mut rerolled=now.clone();
+        rerolled.open_box=None;
+        rerolled.potion_refreshes=Some(2);
+        carry_open_box(Some(&now),&mut rerolled);
+        assert_eq!(rerolled.open_box,now.open_box);
+        let mut next=vorax_scan::reading::empty_state();
+        next.round=Some(2);
+        carry_open_box(Some(&now),&mut next);
+        assert!(next.open_box.is_none());
+        let mut ordinary=before.clone();
+        ordinary.hand=now.hand.clone();
+        ordinary.potion_refreshes=Some(2);
+        carry_open_box(Some(&before),&mut ordinary);
+        assert!(ordinary.open_box.is_none(),"spending a reroll does not prove a kit was opened");
     }
 
     #[test]
@@ -890,10 +972,9 @@ mod tests {
         let mut names = ["Anesthetic Tincture - Aemberon", "Osteolytic Ointment", "Green Bile Solution"].into_iter();
         let mut read = |_: &Img| vorax_scan::korean::name(names.next().unwrap()).to_owned();
         let Outcome::Advice { reading, advice, .. } = pipe.run(&frame, None, Some(&mut read)) else { panic!("selected fan must read") };
-        assert_eq!(advice.goal, vorax::bot::Goal::Mean);
+        assert_eq!(advice.goal, vorax::bot::Goal::Target);
         // Exercise the same raised third card regardless of which strategy wins.
-        // The mean policy can recommend a reroll on this board; geometry must
-        // remain covered without asserting the old target policy's decision.
+        // Geometry must remain covered independently of the strategy's decision.
         let cached = &mut pipe.last_advice.as_mut().unwrap().2;
         cached.best = vorax::advisor::Best::Card(cached.ranking.iter().find(|r| r.index == 2).unwrap().clone());
         let (plan, _, _) = pipe.readvise().unwrap();

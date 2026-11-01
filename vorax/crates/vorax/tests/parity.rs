@@ -14,7 +14,8 @@ use vorax::value::{board_value, build_progress};
 /// The recorded traces were made with tli-vorax-simulator's linear board value (7b4c9ba), not the trees the program
 /// ships: every test plays with that one.
 fn linear_board_value() {
-    let _ = vorax::data::use_model(Some(include_str!("../../../fixtures/boardValue-linear.json")));
+    let _ = vorax::data::use_reference_model(include_str!("../../../fixtures/boardValue-linear.json"));
+    assert!(vorax::data().reference_rules);
     assert!(matches!(vorax::data().model, Some(vorax::data::ValueModel::Rounds { .. })), "the tests need the linear board value");
 }
 

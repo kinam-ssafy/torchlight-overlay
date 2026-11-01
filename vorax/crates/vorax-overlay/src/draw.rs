@@ -98,7 +98,7 @@ pub fn plan_for(advice: &Advice, screen: &ScreenState, reading: &Reading, l: &La
                 ts => format!("{name}  /  탱크 {}", ts.iter().map(|t| (t + 1).to_string()).collect::<Vec<_>>().join(" + ")),
             };
             let sub = match (&advice.note, r.end) {
-                (Some(_), _) => "특수 포션 우선 규칙 / 평균 계산 대상 외".into(),
+                (Some(_), _) => "특수 포션 우선 규칙 / 시뮬레이션 대상 외".into(),
                 (None, Some(e)) => estimate(e, advice.goal),
                 (None, None) => String::new(),
             };

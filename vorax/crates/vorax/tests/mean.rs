@@ -7,7 +7,7 @@ use vorax::types::*;
 
 fn screen(phase: ScreenPhase, hand: Vec<String>) -> ScreenState {
     ScreenState { tanks: vec![None; 6], hand, instruments: vec![], instrument_rounds: None, phase,
-        round: Some(1), potion_refreshes: Some(1), instrument_refreshes: Some(1), shelley: Some(3) }
+        round: Some(1), potion_refreshes: Some(1), instrument_refreshes: Some(1), shelley: Some(3), open_box: None }
 }
 
 #[test]
@@ -23,7 +23,9 @@ fn mean_counts_scores_above_target_in_both_kinds_of_futures() {
             let p = potion_futures(&s, 7, &la, &[Opt::Refresh], 0, 2051, par);
             let i = instrument_futures(&s, 7, &[Pick::Refresh], &Chooser::Ev(Policy::new(2, 0)), goal, 0, 2051, par);
             assert_eq!(p, i);
-            assert_eq!(p[0], Tally { goal: expected * 2051.0, reached: 2051, n: 2051 });
+            assert_eq!(p[0], Tally { goal: expected * 2051.0, reached: 2051, n: 2051,
+                monsters: s.monsters().map(|m| m.quantity as f64).sum::<f64>() * 2051.0,
+                groups: s.monsters().count() as f64 * 2051.0 });
         }
         let policy = Policy { value: Some(true), goal, ..Policy::new(2, 0) };
         assert_eq!(vorax::bot::expected(&s, &Opt::Refresh, &policy, 1, 0), expected);
@@ -31,15 +33,15 @@ fn mean_counts_scores_above_target_in_both_kinds_of_futures() {
 }
 
 #[test]
-fn mean_reroll_is_not_overridden_by_a_potion_kit() {
+fn simulated_reroll_is_not_overridden_by_a_potion_kit() {
     let kit = data().potions.iter().find(|p| matches!(p.targeting, Targeting::Box(_))).unwrap();
     let x = screen(ScreenPhase::Potion, vec![kit.name.clone()]);
     for goal in [Goal::Target, Goal::Mean] {
         let Prepared::Work { work, .. } = advisor::prepare_for_goal(&x, Some(10), goal) else { panic!() };
         let Work::Potion { opts, .. } = &work else { panic!() };
-        let ts: Vec<_> = opts.iter().map(|(o, _)| Tally { goal: if *o == Opt::Refresh { 2000.0 } else { 1000.0 }, reached: 0, n: 10 }).collect();
+        let ts: Vec<_> = opts.iter().map(|(o, _)| Tally { goal: if *o == Opt::Refresh { 2000.0 } else { 1000.0 }, n: 10, ..Tally::default() }).collect();
         let a = advisor::conclude(&work, &x, vec![], Instant::now(), &ts);
-        assert_eq!(a.best == Best::Refresh, goal == Goal::Mean);
+        assert_eq!(a.best, Best::Refresh);
     }
 }
 
@@ -47,7 +49,7 @@ fn mean_reroll_is_not_overridden_by_a_potion_kit() {
 fn mean_orders_instruments_and_reroll_before_rounding() {
     let x = screen(ScreenPhase::Instrument, data().instruments.iter().take(2).map(|i| i.name.clone()).collect());
     let Prepared::Work { work, .. } = advisor::prepare_for_goal(&x, Some(100), Goal::Mean) else { panic!() };
-    let ts = [Tally { goal: 10010.0, reached: 0, n: 100 }, Tally { goal: 10049.0, reached: 0, n: 100 }, Tally { goal: 10030.0, reached: 0, n: 100 }];
+    let ts = [10010.0, 10049.0, 10030.0].map(|goal| Tally { goal, n: 100, ..Tally::default() });
     let a = advisor::conclude(&work, &x, vec![], Instant::now(), &ts);
     let Best::Card(best) = a.best else { panic!("a rounded-down card must not lose to a worse reroll") };
     assert_eq!(best.index, 1);
@@ -55,18 +57,18 @@ fn mean_orders_instruments_and_reroll_before_rounding() {
 }
 
 #[test]
-fn mean_does_not_promote_a_lower_average_just_to_change_the_board() {
+fn simulation_does_not_promote_a_lower_value_just_to_change_the_board() {
     let mut x = screen(ScreenPhase::Potion, vec!["Osteolytic Ointment".into(), "Green Bile Solution".into()]);
     x.potion_refreshes = Some(0);
     x.tanks = vec![Some(advisor::ScreenMonster { archetype: Archetype::Pest, rarity: Rarity::Normal, activity: 10, quantity: 10 }); 6];
     for goal in [Goal::Target, Goal::Mean] {
         let Prepared::Work { work, .. } = advisor::prepare_for_goal(&x, Some(10), goal) else { panic!() };
         let Work::Potion { opts, .. } = &work else { panic!() };
-        let ts: Vec<_> = opts.iter().map(|(o, _)| Tally { goal: if o.index() == Some(0) { 1000.0 } else { 999.0 }, reached: 0, n: 10 }).collect();
+        let ts: Vec<_> = opts.iter().map(|(o, _)| Tally { goal: if o.index() == Some(0) { 1000.0 } else { 999.0 }, n: 10, ..Tally::default() }).collect();
         let a = advisor::conclude(&work, &x, vec![], Instant::now(), &ts);
         let Best::Card(best) = a.best else { panic!() };
-        assert_eq!(best.index, if goal == Goal::Mean { 0 } else { 1 });
-        assert_eq!(best.no_effect, if goal == Goal::Mean { Some(true) } else { None });
+        assert_eq!(best.index, 0);
+        assert_eq!(best.no_effect, Some(true));
     }
 }
 

@@ -158,6 +158,7 @@ fn scan_with_presence(captured: &Img, data: &ScanData, pictures: bool, hand_dy: 
         potion_refreshes: None,
         instrument_refreshes: None,
         shelley: None,
+        open_box: None,
     };
 
     // Localized counters extend above the original band. Keep its bottom fixed so the activity
