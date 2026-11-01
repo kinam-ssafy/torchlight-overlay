@@ -24,6 +24,8 @@ pub struct Pill {
 
 #[derive(Clone, Debug, Default)]
 pub struct Plan {
+    /// A recognition request, visually distinct from a recommendation.
+    pub help: bool,
     pub pill: Option<Pill>,
     /// the card to take: its centre, tilt and size in screen pixels
     pub card: Option<(CardPos, f64, f64)>,
@@ -236,6 +238,7 @@ pub(crate) fn text(pm: &mut Pixmap, font: &fontdue::Font, s: &str, px: f32, x: f
 /// The overlay for a screen of `w`×`h` pixels, transparent everywhere it draws nothing (premultiplied RGBA).
 /// `accent`: the marks' colour.
 pub fn render(plan: &Plan, w: u32, h: u32, fonts: &Fonts, accent: (u8, u8, u8)) -> Pixmap {
+    let accent = if plan.help { (255, 190, 80) } else { accent };
     let mut pm = Pixmap::new(w.max(1), h.max(1)).unwrap();
     // sizes follow the screen's height, as the game's UI does (1440p is 1)
     let s = (h as f32 / 1440.0).max(0.6);

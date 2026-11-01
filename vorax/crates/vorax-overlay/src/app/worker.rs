@@ -9,7 +9,7 @@ use crate::pipeline::{Outcome, Pipeline};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
-use vorax_scan::live::{classify, log_time, Follower, Settler, Trigger};
+use vorax_scan::live::{classify, log_time, Follower, OpeningOffer, Settler, Trigger};
 
 pub struct Options {
     pub log: Option<PathBuf>,
@@ -79,7 +79,7 @@ pub fn run(opts: Options, tx: Sender<ToUi>, waker: Waker, rx: Receiver<ToWorker>
     let ocr = if opts.ocr {
         match Ocr::new() {
             Ok(o) => {
-                note(&format!("card titles read with Windows OCR ({})", o.language));
+                note(&format!("card title reader: {} ({})", o.reader_name, o.language));
                 Some(o)
             }
             Err(e) => {
@@ -94,7 +94,15 @@ pub fn run(opts: Options, tx: Sender<ToUi>, waker: Waker, rx: Receiver<ToWorker>
         note(&format!("saving every picture read to {}", dir.display()));
     }
     let mut pipe = Pipeline::new(opts.shelley);
+    let memory_path = super::sys::data_dir().join("starting-items.json");
+    if let Ok(bytes) = std::fs::read(&memory_path) {
+        if let Ok(memory) = serde_json::from_slice::<vorax_scan::instruments::StartingItems>(&bytes) {
+            if memory.valid() { pipe.starting_items = memory; }
+        }
+    }
+    let mut saved_memory = pipe.starting_items.clone();
     let mut follower: Option<Follower> = None;
+    let mut opening = OpeningOffer::default();
     let mut looked_for_log = Instant::now() - Duration::from_secs(60);
     let mut settler = Settler::default();
     let mut last_poll = Instant::now() - Duration::from_secs(1);
@@ -142,7 +150,12 @@ pub fn run(opts: Options, tx: Sender<ToUi>, waker: Waker, rx: Receiver<ToWorker>
                     if let Some(age) = last_game_line_age(&p) {
                         game_line_at = Instant::now().checked_sub(age);
                     }
-                    follower = Some(Follower::new(p));
+                    let mut next = Follower::new(p.clone());
+                    next.poll(); // establish the offset before reading history, so new actions cannot be skipped
+                    opening = OpeningOffer::from_recent_log(&p);
+                    pipe.opening_offer = opening.is_initial();
+                    note(&format!("startup log: initial instrument offer = {}", pipe.opening_offer));
+                    follower = Some(next);
                 }
                 None => note("UE_game.log not found (start the game, or pass --log <path>)"),
             }
@@ -152,6 +165,11 @@ pub fn run(opts: Options, tx: Sender<ToUi>, waker: Waker, rx: Receiver<ToWorker>
             if let Some(f) = &mut follower {
                 let lines = f.poll();
                 if !lines.is_empty() {
+                    if retry.is_some() && lines.iter().any(|line| line.contains("normal-click RelicBtn") || line.contains("normal-click SelectBtn")) {
+                        manual = true;
+                    }
+                    opening.feed(&lines);
+                    pipe.opening_offer = opening.is_initial();
                     settler.feed(&lines, now_ms());
                     if lines.iter().any(|line| matches!(classify(line), Some(Trigger::Board | Trigger::Screen | Trigger::Over))) {
                         pipe.invalidate_display();
@@ -213,9 +231,17 @@ pub fn run(opts: Options, tx: Sender<ToUi>, waker: Waker, rx: Receiver<ToWorker>
             }
             // the look again after a pick, to settle the new icon: the board hasn't changed, so the marks stay up
             // while it reads and only change if what it finds does
-            let quiet = relook && due.is_none() && !manual && again.is_none();
+            let quiet = (relook || again.is_some()) && due.is_none() && !manual;
             pipe.invalidate_display();
             let unread = read(&capturer, ocr.as_ref(), &mut pipe, trigger, manual || relook, quiet, opts.frames.as_deref(), &send);
+            if pipe.starting_items != saved_memory {
+                let bytes = serde_json::to_vec(&pipe.starting_items).expect("finite icon signatures");
+                let pending = memory_path.with_extension("tmp");
+                if std::fs::write(&pending, bytes).and_then(|_|std::fs::rename(&pending,&memory_path)).is_ok() {
+                    saved_memory = pipe.starting_items.clone();
+                    note("confirmed starting-item appearance saved locally");
+                }
+            }
             if !unread {
                 retries = 0;
             } else {
@@ -330,13 +356,12 @@ fn read(capturer: &Capturer, ocr: Option<&Ocr>, pipe: &mut Pipeline, trigger: Op
         Outcome::Uncertain { reading } => {
             let fields: Vec<_> = reading.fields.iter().filter(|(k, f)| !f.sure && (k.starts_with("hand") || *k == "refreshes" || *k == "round" || k.starts_with("tank") || k.starts_with("instrument"))).map(|(k, _)| k.as_str()).collect();
             note(&format!("unread board: fields {fields:?}; problems {:?}", reading.problems));
-            let labels: Vec<_> = [("round", "라운드 숫자"), ("hand", "카드 이름"), ("tank", "탱크 수치"),
-                ("instrument", "보유 수술 도구"), ("refreshes", "새로고침 횟수")].iter()
-                .filter(|(key, _)| fields.iter().any(|field| field.starts_with(key))).map(|(_, label)| *label).collect();
-            let detail = if labels.is_empty() { "화면 전환을 확인하고 있습니다.".to_owned() }
-                else { format!("확인 중: {}. 자동으로 다시 읽습니다.", labels.join(", ")) };
-            status("인식 재시도 중", &detail, "추천 보류 / 자동 재시도");
-            send(ToUi::Clear);
+            let img = vorax_scan::window::windowed_game(&frame).map_or_else(|| frame.clone(), |r|vorax_scan::window::crop_to(&frame,&r));
+            let layout = vorax_scan::layout::layout_at(img.width,img.height,reading.ui());
+            let plan = crate::recovery::guidance(&img,&reading,&layout,pipe.help_icon);
+            let pill = plan.pill.as_ref().unwrap();
+            status(&pill.main,&pill.sub,"추천 보류 / 확인 안내");
+            send(ToUi::Show(plan,img.width,img.height));
         }
         Outcome::Animating => {
             note(&format!("{}: picture {grabbed} ms, a card was flying off: looking again", trigger.unwrap_or("manual")));

@@ -5,6 +5,7 @@ use crate::layout::Layout;
 use crate::pixels::{signature, Img, Rect};
 use crate::reading::{FieldRead, Fields, Ranks};
 use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 
 const BRIGHT: u8 = 60;
 const FILLED_MIN: f64 = 0.008;
@@ -116,15 +117,58 @@ pub struct InstrumentsRead {
     pub fields: Fields,
     pub ranks: Ranks,
     pub known: Vec<String>,
+    pub locations: Vec<Rect>,
+    slots: usize,
+}
+
+/// Icons observed before the first tool was selected. Their identity comes from the
+/// start event, not a guess at the nearest tool. Persisted locally by the overlay.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct StartingItems(Vec<Vec<f64>>);
+
+impl StartingItems {
+    pub fn learn(&mut self, img: &Img, l: &Layout) {
+        let Some(rects) = icon_rects(img, l) else { return; };
+        for r in rects {
+            if !holds_an_icon(img, &r) { continue; }
+            self.learn_at(img, r);
+        }
+    }
+
+    pub fn valid(&self) -> bool {
+        self.0.len() <= 64 && self.0.iter().all(|v| v.len() == N * N && v.iter().all(|x| x.is_finite()))
+    }
+
+    pub fn learn_at(&mut self, img: &Img, r: Rect) -> bool {
+        let p = signature(img, r, N, N);
+        let mut cache = HashMap::new();
+        if self.0.iter().any(|v| icon_similarity(v, &p, &mut cache) >= 0.95) { return false; }
+        if self.0.len() >= 64 { return false; }
+        self.0.push(p);
+        true
+    }
 }
 
 pub fn read_instruments(img: &Img, l: &Layout, data: &ScanData) -> InstrumentsRead {
-    read_icons_at(img, &l.instrument_icon, data, false)
+    read_icons_at(img, &l.instrument_icon, data, false, &StartingItems::default())
 }
 
 /// Localized panels space their icons differently. Locate separated foreground clusters in the
-/// existing icon strip, then accept them only when every normal icon passes the original matcher.
+/// existing icon strip. Keep each slot's confidence separately: an unknown starting item
+/// must not discard a confidently located tool beside it. The tracker validates ownership.
 pub fn refine_instruments(img: &Img, l: &Layout, data: &ScanData) -> Option<InstrumentsRead> {
+    refine_with_starting(img, l, data, &StartingItems::default())
+}
+
+pub fn refine_with_starting(img: &Img, l: &Layout, data: &ScanData, starting: &StartingItems) -> Option<InstrumentsRead> {
+    let rects = icon_rects(img, l)?;
+    let read = read_icons_at(img, &rects, data, true, starting);
+    // A recognized starting item occupies a slot even though it is not a tool.
+    (read.slots == rects.len()).then_some(read)
+}
+
+pub fn icon_rects(img: &Img, l: &Layout) -> Option<Vec<Rect>> {
     let first = l.instrument_icon.first()?;
     let last = l.instrument_icon.last()?;
     let x0 = (last.x - 60.0 * l.k).max(0.0) as usize;
@@ -145,9 +189,7 @@ pub fn refine_instruments(img: &Img, l: &Layout, data: &ScanData) -> Option<Inst
     groups.retain(|(a,b)| (*b-*a+1) as f64 >= 12.0*l.k);
     if groups.is_empty() || groups.len() > l.instrument_icon.len() { return None; }
     if groups.iter().any(|(a,b)| (*b-*a+1) as f64 > 100.0*l.k) { return None; }
-    let rects: Vec<_> = groups.iter().rev().map(|(a,b)| Rect::new((*a+*b) as f64/2.0-first.w/2.0, first.y, first.w, first.h)).collect();
-    let read = read_icons_at(img, &rects, data, true);
-    (read.names.len() == rects.len() && read.fields.values().all(|f| f.sure)).then_some(read)
+    Some(groups.iter().rev().map(|(a,b)| Rect::new((*a+*b) as f64/2.0-first.w/2.0, first.y, first.w, first.h)).collect())
 }
 
 /// One-pixel wires alias when reduced to the 24x24 reference grid. Compare their low-frequency
@@ -172,14 +214,17 @@ fn softened(v: &[f64]) -> Vec<f64> {
     out
 }
 
-fn read_icons_at(img: &Img, rects: &[Rect], data: &ScanData, refine: bool) -> InstrumentsRead {
+fn read_icons_at(img: &Img, rects: &[Rect], data: &ScanData, refine: bool, starting: &StartingItems) -> InstrumentsRead {
     let mut from_right: Vec<String> = Vec::new();
     let mut reads: Vec<FieldRead> = Vec::new();
     let mut ranks_from_right: Ranks = Vec::new();
+    let mut locations = Vec::new();
+    let mut slots = 0;
     for r in rects {
         if !holds_an_icon(img, r) {
             break;
         }
+        slots += 1;
         let p = signature(img, *r, 24, 24);
         let mut lined = HashMap::new();
         let mut ranked: Vec<(String, f64)> = data
@@ -189,6 +234,11 @@ fn read_icons_at(img: &Img, rects: &[Rect], data: &ScanData, refine: bool) -> In
             .map(|(n, vs)| (n.clone(), vs.iter().map(|v| icon_similarity(v, &p, &mut lined)).fold(f64::NEG_INFINITY, f64::max)))
             .collect();
         ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let start_score = starting.0.iter().map(|v| icon_similarity(v, &p, &mut lined)).fold(-1.0, f64::max);
+        let tool_score = ranked.iter().find(|(n, _)| n != STARTING_ITEM).map_or(-1.0, |(_, s)| *s);
+        if start_score >= 0.90 && start_score - tool_score >= ICON_GAP {
+            continue;
+        }
         if refine && (ranked[0].1 < ICON_MIN || ranked[0].1 - ranked.get(1).map_or(0.0, |x| x.1) < ICON_GAP) {
             let soft = softened(&p);
             let mut cache = HashMap::new();
@@ -207,15 +257,17 @@ fn read_icons_at(img: &Img, rects: &[Rect], data: &ScanData, refine: bool) -> In
         let second = ranked.get(1).map(|x| x.1);
         reads.push(FieldRead { sure: ranked[0].1 >= ICON_MIN && ranked[0].1 - second.unwrap_or(0.0) >= ICON_GAP, guess: Some(ranked[0].0.clone()), score: Some(ranked[0].1), second });
         from_right.push(ranked[0].0.clone());
+        locations.push(*r);
         ranks_from_right.push(ranked.into_iter().filter(|(n, _)| n != STARTING_ITEM).collect());
     }
     from_right.reverse();
     reads.reverse();
     ranks_from_right.reverse();
+    locations.reverse();
     let mut fields = Fields::new();
     for (i, f) in reads.into_iter().enumerate() {
         fields.insert(format!("instrument{i}"), f);
     }
     let known = data.icons.keys().filter(|n| n.as_str() != "none" && n.as_str() != STARTING_ITEM).cloned().collect();
-    InstrumentsRead { names: from_right, fields, ranks: ranks_from_right, known }
+    InstrumentsRead { names: from_right, fields, ranks: ranks_from_right, known, locations, slots }
 }

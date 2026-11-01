@@ -98,7 +98,7 @@ pub fn read_phase(img: &Img, l: &Layout, data: &ScanData) -> (Option<String>, f6
 }
 
 /// Every known card ranked for one card position, best first.
-fn rank(img: &Img, c: &CardPos, k: f64, prefix: &str, data: &ScanData) -> Vec<(String, f64)> {
+fn rank(img: &Img, c: &CardPos, k: f64, prefix: &str, data: &ScanData, use_text: bool) -> Vec<(String, f64)> {
     use std::cell::RefCell;
     let arts: RefCell<HashMap<(i32, i32), std::rc::Rc<Art>>> = RefCell::new(HashMap::new());
     let txts: RefCell<HashMap<(i32, i32), std::rc::Rc<Vec<f64>>>> = RefCell::new(HashMap::new());
@@ -125,7 +125,7 @@ fn rank(img: &Img, c: &CardPos, k: f64, prefix: &str, data: &ScanData) -> Vec<(S
         .iter()
         .filter(|(key, _)| key.starts_with(prefix))
         .map(|(key, fs)| {
-            let texts = data.texts.get(key);
+            let texts = if use_text { data.texts.get(key) } else { None };
             let (mut best, mut at, mut a0) = (f64::NEG_INFINITY, (0.0, 0.0), 0.0);
             for &(dx, dy) in &sh {
                 let ar = art(dx, dy);
@@ -162,6 +162,15 @@ pub struct SlotsRead {
 }
 
 pub fn read_at(img: &Img, l: &Layout, size: usize, phase: &str, data: &ScanData, slots: Option<&[usize]>) -> SlotsRead {
+    read_at_with_text(img, l, size, phase, data, slots, true)
+}
+
+/// The reference text blocks are English. Localized cards may only use their shared artwork.
+pub fn read_art_at(img: &Img, l: &Layout, size: usize, phase: &str, data: &ScanData, slots: Option<&[usize]>) -> SlotsRead {
+    read_at_with_text(img, l, size, phase, data, slots, false)
+}
+
+fn read_at_with_text(img: &Img, l: &Layout, size: usize, phase: &str, data: &ScanData, slots: Option<&[usize]>, use_text: bool) -> SlotsRead {
     let mut fields = Fields::new();
     let mut problems = Vec::new();
     let mut names = Vec::new();
@@ -173,7 +182,7 @@ pub fn read_at(img: &Img, l: &Layout, size: usize, phase: &str, data: &ScanData,
     let ranked_all: Vec<Option<Vec<(String, f64)>>> = pos
         .par_iter()
         .enumerate()
-        .map(|(j, c)| if slots.is_some_and(|s| !s.contains(&j)) { None } else { Some(rank(img, c, l.k, &prefix, data)) })
+        .map(|(j, c)| if slots.is_some_and(|s| !s.contains(&j)) { None } else { Some(rank(img, c, l.k, &prefix, data, use_text)) })
         .collect();
     for (j, (c, ranked)) in pos.iter().zip(ranked_all).enumerate() {
         let Some(ranked) = ranked else {

@@ -38,6 +38,47 @@ const DONE_DELAY_MS: f64 = 150.0;
 const SETTLE_MS: f64 = 400.0;
 const MAX_MS: f64 = 3000.0;
 
+/// Evidence that the first instrument has not been selected. A reroll changes the offer,
+/// not ownership. Unknown history stays unknown; reopening a page is not a new game.
+#[derive(Default)]
+pub struct OpeningOffer(bool);
+
+impl OpeningOffer {
+    pub fn feed<S: AsRef<str>>(&mut self, lines: &[S]) {
+        for line in lines {
+            let line = line.as_ref();
+            if line.contains("S13GamePlay_C_StartGameBtn") {
+                self.0 = true;
+            } else if classify(line) == Some(Trigger::Over)
+                || line.contains("normal-click ComfirmBtn")
+                || line.contains("normal-click ConfirmBtn")
+                || line.contains("KYZ_Card_Selected_Confirm") {
+                self.0 = false;
+            }
+        }
+    }
+
+    pub fn is_initial(&self) -> bool { self.0 }
+
+    /// Bound startup IO even when the game's log has grown to gigabytes. If the start event
+    /// fell outside this tail, the screenshot must stand on its own; never infer an empty panel.
+    pub fn from_recent_log(path: &std::path::Path) -> Self {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut result = Self::default();
+        let Ok(mut file) = std::fs::File::open(path) else { return result; };
+        let Ok(size) = file.metadata().map(|m| m.len()) else { return result; };
+        let offset = size.saturating_sub(8 << 20);
+        if file.seek(SeekFrom::Start(offset)).is_err() { return result; }
+        let mut bytes = Vec::new();
+        if file.take(size - offset).read_to_end(&mut bytes).is_err() { return result; }
+        let text = String::from_utf8_lossy(&bytes);
+        let mut lines = text.lines();
+        if offset > 0 { lines.next(); }
+        for line in lines { result.feed(&[line]); }
+        result
+    }
+}
+
 pub fn classify(line: &str) -> Option<Trigger> {
     for (k, pats) in [(Trigger::Board, BOARD), (Trigger::Screen, SCREEN), (Trigger::Refresh, REFRESH), (Trigger::Over, OVER)] {
         if pats.iter().any(|p| line.contains(p)) {

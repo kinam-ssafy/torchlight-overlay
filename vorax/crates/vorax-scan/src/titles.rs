@@ -151,6 +151,16 @@ fn settled(r: &[(String, f64)]) -> bool {
     r[0].1 >= MIN_Q && r[0].1 - r.get(1).map_or(f64::NEG_INFINITY, |x| x.1) >= GAP
 }
 
+/// The same confidence and runner-up margin used by the card pipeline.
+pub fn confident_title(text: &str) -> bool {
+    PHASES.iter().any(|phase| settled(&ranked(crate::scan_data(), phase, text)))
+}
+
+pub fn confident_instrument(text: &str) -> Option<String> {
+    let names = ranked(crate::scan_data(), "instrument", text);
+    settled(&names).then(|| names[0].0.clone())
+}
+
 /// Some of a hand's cards matched by their pictures: per position, the best few cards, its field, and whether
 /// no picture was close enough.
 #[derive(Clone, Debug)]
@@ -163,8 +173,17 @@ pub struct PictureRead {
 /// The pictures of the given card positions, read as the reading's own would be.
 /// `hand_dy`: the reading's hand_dy (0 where the layout puts the hand); `ui`: its interface scale.
 pub fn pictures(img: &Img, data: &ScanData, phase: &str, size: usize, slots: &[usize], hand_dy: f64, ui: f64) -> HashMap<usize, PictureRead> {
+    picture_matches(img, data, phase, size, slots, hand_dy, ui, false)
+}
+
+pub fn localized_pictures(img: &Img, data: &ScanData, phase: &str, size: usize, slots: &[usize], hand_dy: f64, ui: f64) -> HashMap<usize, PictureRead> {
+    picture_matches(img, data, phase, size, slots, hand_dy, ui, true)
+}
+
+fn picture_matches(img: &Img, data: &ScanData, phase: &str, size: usize, slots: &[usize], hand_dy: f64, ui: f64, localized: bool) -> HashMap<usize, PictureRead> {
     let l = layout_at(img.width, img.height, ui).shifted_hand(hand_dy);
-    let r = read_at(img, &l, size, phase, data, Some(slots));
+    let r = if localized { crate::cards::read_art_at(img, &l, size, phase, data, Some(slots)) }
+        else { read_at(img, &l, size, phase, data, Some(slots)) };
     slots
         .iter()
         .map(|&j| {

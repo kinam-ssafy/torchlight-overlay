@@ -52,7 +52,11 @@ pub struct Pipeline {
     display_current: bool,
     card_frames: Option<Vec<crate::card_frame::CardFrame>>,
     pub tracker: InstrumentTracker,
+    pub starting_items: vorax_scan::instruments::StartingItems,
+    pub help_icon: Option<vorax_scan::pixels::Rect>,
     pub shelley: i32,
+    /// Log evidence that no instrument has been selected since this game's Start button.
+    pub opening_offer: bool,
     /// instrument rerolls left, as last read on an instrument offer this game (a potion board doesn't show them)
     instrument_refreshes: Option<i32>,
     /// the last board advised on, with the size of its picture, for advising again when a setting changes (and
@@ -85,7 +89,7 @@ pub fn shelley_rerolls(level: i32) -> i32 {
 
 impl Pipeline {
     pub fn new(shelley: i32) -> Pipeline {
-        Pipeline { last_advice: None, display_current: false, card_frames: None, tracker: InstrumentTracker::default(), shelley, instrument_refreshes: None, last: None, protocols: false, resumed: false }
+        Pipeline { last_advice: None, display_current: false, card_frames: None, tracker: InstrumentTracker::default(), starting_items: Default::default(), help_icon: None, shelley, opening_offer: false, instrument_refreshes: None, last: None, protocols: false, resumed: false }
     }
 
     /// The board's instrument rerolls: as read on an instrument offer, else carried from the last one this game,
@@ -133,6 +137,8 @@ impl Pipeline {
         };
         // with a text reader: the cards by their printed names, by their pictures only where a name doesn't settle
         let mut fitted = None;
+        self.help_icon = None;
+        let mut removed_start = false;
         let raw = match ocr {
             Some(read) => {
                 let mut names = scan(&img, data, false);
@@ -140,7 +146,30 @@ impl Pipeline {
                 let korean = std::env::var("VORAX_LANGUAGE").map_or(true, |v| v == "ko");
                 let layout = layout_at(img.width, img.height, ui).shifted_hand(dy);
                 if korean {
-                    if let Some(panel) = vorax_scan::instruments::refine_instruments(&img, &layout, data) {
+                    if let Some(mut panel) = vorax_scan::instruments::refine_with_starting(&img, &layout, data, &self.starting_items) {
+                        let unknown: Vec<_> = (0..panel.names.len()).filter(|i| !panel.fields[&format!("instrument{i}")].sure).collect();
+                        self.help_icon = unknown.first().and_then(|i| panel.locations.get(*i)).copied();
+                        // A single unread slot can be identified by elimination. Never assign a
+                        // detail to an arbitrary slot, or to another tool the panel already shows.
+                        if let [i] = unknown.as_slice() {
+                            if let Some(detail) = crate::recovery::read_detail(&img, read) {
+                                match detail {
+                                    crate::recovery::Detail::StartingItem => {
+                                        self.starting_items.learn_at(&img, panel.locations[*i]);
+                                        if let Some(corrected) = vorax_scan::instruments::refine_with_starting(&img, &layout, data, &self.starting_items) {
+                                            removed_start = corrected.names.len() + 1 == panel.names.len();
+                                            panel = corrected;
+                                        }
+                                    }
+                                    crate::recovery::Detail::Tool(name) if !panel.names.iter().enumerate().any(|(j,n)| j != *i && *n == name) => {
+                                        panel.names[*i] = name.clone();
+                                        panel.ranks[*i] = vec![(name.clone(),1.0)];
+                                        panel.fields.insert(format!("instrument{i}"), vorax_scan::reading::FieldRead { sure:true, guess:Some(name), ..Default::default() });
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
                         names.state.instruments = panel.names;
                         names.instrument_ranks = Some(panel.ranks);
                         names.fields.retain(|key, _| !key.starts_with("instrument"));
@@ -153,7 +182,10 @@ impl Pipeline {
                 let positions = fitted.as_ref().filter(|_| korean).map(|frames| frames.iter().map(|(c, _, h)|
                     vorax_scan::layout::CardPos { cy: c.cy - h / 12.0 + 62.5 * layout.k, ..*c }
                 ).collect::<Vec<_>>());
-                let pics = |phase: &str, size: usize, slots: &[usize]| pictures(&img, data, phase, size, slots, dy, ui);
+                let pics = |phase: &str, size: usize, slots: &[usize]| {
+                    if korean { vorax_scan::titles::localized_pictures(&img, data, phase, size, slots, dy, ui) }
+                    else { pictures(&img, data, phase, size, slots, dy, ui) }
+                };
                 vorax_scan::titles::read_titles_styled(&img, names, data, read, Some(&pics), korean, positions.as_deref())
             }
             None => scan(&img, data, true),
@@ -167,6 +199,12 @@ impl Pipeline {
         // the screen opened again on the game under way (Escape and back skips long animations): what's known of it
         // (instruments and their rounds, rerolls) is kept
         let round_sure = raw.fields.get("round").is_some_and(|f| f.sure);
+        let trigger = if self.opening_offer && round_sure
+            && raw.state.round == Some(1) && raw.state.phase == vorax::advisor::ScreenPhase::Instrument {
+            // This can be a rerolled first offer when the overlay was restarted. The log
+            // proves there are no equipped tools, regardless of the map's starting-item art.
+            Some("screen")
+        } else { trigger };
         let before = self.last.as_ref().and_then(|(r, ..)| r.state.round);
         self.resumed = trigger == Some("screen") && resumes(before, round_sure.then_some(raw.state.round.unwrap_or(1)));
         let trigger = if self.resumed { None } else { trigger };
@@ -180,19 +218,20 @@ impl Pipeline {
             return Outcome::Closing;
         }
         self.protocols |= protocol;
+        let mut tracker = self.tracker.clone();
+        if removed_start { tracker.start = tracker.start.saturating_sub(1); }
         // A manual first capture can be a reward instrument offer midway through round 1.
         // Seed only confidently read owned icons; an explicit new-game event still resets them.
-        if self.last.is_none() && self.tracker.owned.is_empty() && trigger.is_none()
+        if self.last.is_none() && tracker.owned.is_empty() && trigger.is_none()
             && raw.state.phase == vorax::advisor::ScreenPhase::Instrument && !raw.state.instruments.is_empty() {
             if !(0..raw.state.instruments.len()).all(|i| raw.fields.get(&format!("instrument{i}")).is_some_and(|f| f.sure)) {
                 // An unread owned panel is not evidence that this is a fresh game with zero tools.
                 return Outcome::Uncertain { reading: Box::new(raw) };
             }
-            self.tracker.owned = raw.state.instruments.clone();
-            self.tracker.rounds = (0..self.tracker.owned.len()).map(|i| if i == 0 && raw.state.round == Some(1) { 1 } else { 0 }).collect();
+            tracker.owned = raw.state.instruments.clone();
+            tracker.rounds = (0..tracker.owned.len()).map(|i| if i == 0 && raw.state.round == Some(1) { 1 } else { 0 }).collect();
         }
-        let tr = track_instruments(&self.tracker, &raw, trigger);
-        self.tracker = tr.tracker.clone();
+        let tr = track_instruments(&tracker, &raw, trigger);
         let mut reading = raw;
         reading.state.instruments = tr.instruments.clone();
         reading.state.instrument_rounds = Some(tr.rounds.clone());
@@ -212,6 +251,15 @@ impl Pipeline {
         self.fill_rerolls(&mut reading);
         let read_ms = t.elapsed().as_secs_f64() * 1000.0;
         if !trustworthy(&reading) { return Outcome::Uncertain { reading: Box::new(reading) }; }
+        // Like the Tartarus reader, keep the last complete state across partial/covered
+        // frames. A failed OCR pass must not replace the offer or invent an owned tool.
+        self.tracker = tr.tracker;
+        if self.opening_offer && reading.state.round == Some(1)
+            && reading.state.phase == vorax::advisor::ScreenPhase::Instrument {
+            self.starting_items.learn(&img, &layout_at(img.width, img.height, reading.ui()));
+            // Subsequent localized reads exclude the learned starting icons themselves.
+            self.tracker.start = 0;
+        }
         let (advice, cached) = self.advise(&reading.state);
         let l = layout_at(img.width, img.height, reading.ui()).shifted_hand(reading.hand_dy.unwrap_or(0.0));
         self.card_frames = fitted.or_else(|| crate::card_frame::detect(&img, &l, reading.state.hand.len()));
@@ -423,6 +471,163 @@ mod tests {
         reading.problems.clear();
         reading.fields.get_mut("hand0").unwrap().sure = false;
         assert!(!trustworthy(&reading));
+    }
+
+    #[test]
+    fn rerolled_starting_offer_does_not_equip_the_map_item() {
+        use super::*;
+        let frame = decode_png(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames/instrument-rerolled-ko-1080p.png")).unwrap();
+        let mut pipe = Pipeline::new(5);
+        for (proven, cached) in [(false, false), (true, false), (true, true)] {
+            pipe.opening_offer = proven;
+            let mut titles = ["이형의 육아종", "얼룩진 간", "증식한 전두엽"].into_iter();
+            let mut read = |_: &Img| titles.next().expect("one heading per card").to_owned();
+            let outcome = pipe.run(&frame, None, Some(&mut read));
+            if !proven {
+                assert!(matches!(outcome, Outcome::Uncertain { .. }), "unknown history cannot discard unread tools");
+                continue;
+            }
+            let Outcome::Advice { reading, cached: actual, .. } = outcome else { panic!("proven starting offer must remain readable") };
+            assert_eq!(actual, cached);
+            assert!(reading.state.instruments.is_empty());
+            assert_eq!(reading.state.round, Some(1));
+            assert_eq!(reading.state.instrument_refreshes, Some(0));
+            assert!(trustworthy(&reading));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires installed Korean Windows OCR"]
+    fn rerolled_offer_reads_with_real_ocr_and_keeps_the_same_run() {
+        use super::*;
+        unsafe { let _ = windows::Win32::System::WinRT::RoInitialize(windows::Win32::System::WinRT::RO_INIT_MULTITHREADED); }
+        let ocr = crate::app::ocr::Ocr::new().unwrap();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames");
+        let initial = decode_png(&root.join("initial-ko-1080p.png")).unwrap();
+        let source = decode_png(&root.join("instrument-rerolled-ko-1080p.png")).unwrap();
+        let mut failures = Vec::new();
+        for height in [720, 900, 1080] { for gain in [0.85, 1.0, 1.15] {
+            let mut frame = vorax_scan::pixels::resize(&source, height * 16 / 9, height);
+            for px in frame.data.chunks_exact_mut(4) { for channel in &mut px[..3] { *channel = (*channel as f64 * gain).min(255.0) as u8; } }
+            let mut pipe = Pipeline::new(5);
+            let mut read = |crop: &Img| ocr.read(crop).unwrap();
+            assert!(matches!(pipe.run(&initial, Some("screen"), Some(&mut read)), Outcome::Advice { .. }));
+            let before = pipe.tracker.owned.clone();
+            let outcome = pipe.run(&frame, Some("board"), Some(&mut read));
+            let Outcome::Advice { reading, cached, .. } = outcome else {
+                if let Outcome::Uncertain { reading } = outcome {
+                    failures.push(format!("{height} gain {gain}: {:?}; {:?}", reading.problems,
+                        reading.fields.iter().filter(|(_, f)| !f.sure).collect::<Vec<_>>()));
+                } else { failures.push(format!("{height} gain {gain}: not advice")); }
+                continue;
+            };
+            assert!(!cached, "a different rerolled hand must recalculate");
+            assert_eq!(reading.state.hand, ["Aberrant Sprout", "Prismatic Liver", "Hyperplastic Frontal Lobe"]);
+            assert_eq!(reading.state.instruments, before, "reroll cannot equip an instrument");
+            assert_eq!(reading.state.instrument_refreshes, Some(0));
+            let mut restarted = Pipeline::new(5);
+            restarted.opening_offer = true;
+            assert!(matches!(restarted.run(&frame, None, Some(&mut read)), Outcome::Advice { .. }), "{height} gain {gain}: restart");
+        } }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
+    fn unread_hand_cannot_overwrite_the_confirmed_instrument_history() {
+        use super::*;
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames");
+        let mut frame = decode_png(&root.join("instrument-rerolled-ko-1080p.png")).unwrap();
+        let mut pipe = Pipeline::new(5);
+        let mut titles = ["이형의 육아종", "얼룩진 간", "증식한 전두엽"].into_iter();
+        let mut read = |_: &Img| titles.next().unwrap().to_owned();
+        assert!(matches!(pipe.run(&frame, Some("screen"), Some(&mut read)), Outcome::Advice { .. }));
+        let before = pipe.tracker.clone();
+        for y in 700..945 { for x in 790..1370 { frame.data[(y*frame.width+x)*4..(y*frame.width+x)*4+3].fill(15); } }
+        let mut unknown = |_: &Img| "unreadable".to_owned();
+        assert!(!matches!(pipe.run(&frame, Some("board"), Some(&mut unknown)), Outcome::Advice { .. }));
+        assert_eq!(pipe.tracker, before);
+        assert!(pipe.readvise().is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires Korean OCR and the bundled helper"]
+    fn starting_item_and_selected_tool_keep_their_separate_slots() {
+        use super::*;
+        unsafe { let _ = windows::Win32::System::WinRT::RoInitialize(windows::Win32::System::WinRT::RO_INIT_MULTITHREADED); }
+        let ocr = crate::app::ocr::Ocr::new().unwrap();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames");
+        let initial = decode_png(&root.join("instrument-rerolled-ko-1080p.png")).unwrap();
+        let source = decode_png(&root.join("potion-starting-item-ko-1080p.png")).unwrap();
+        for height in [720, 900, 1080] { for gain in [0.85, 1.0, 1.15] {
+            let mut frame = vorax_scan::pixels::resize(&source, height * 16 / 9, height);
+            for px in frame.data.chunks_exact_mut(4) { for channel in &mut px[..3] { *channel = (*channel as f64 * gain).min(255.0) as u8; } }
+            let mut pipe = Pipeline::new(3);
+            let mut read = |crop: &Img| ocr.read(crop).unwrap();
+            assert!(matches!(pipe.run(&initial, Some("screen"), Some(&mut read)), Outcome::Advice { .. }));
+            let outcome = pipe.run(&frame, Some("board"), Some(&mut read));
+            let Outcome::Advice { reading, .. } = outcome else {
+                if let Outcome::Uncertain { reading } = outcome { panic!("{height} gain {gain}: {:?}; {:?}", reading.problems, reading.fields); }
+                panic!("{height} gain {gain}: next offer");
+            };
+            assert_eq!(reading.state.instruments, ["Aberrant Sprout"]);
+            assert_eq!(reading.state.potion_refreshes, Some(3));
+            assert_eq!(reading.state.instrument_refreshes, Some(0));
+            assert!(trustworthy(&reading));
+        } }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires Korean OCR and the bundled helper"]
+    fn clicking_an_unknown_tool_recovers_then_survives_a_restart() {
+        use super::*;
+        unsafe { let _ = windows::Win32::System::WinRT::RoInitialize(windows::Win32::System::WinRT::RO_INIT_MULTITHREADED); }
+        let ocr = crate::app::ocr::Ocr::new().unwrap();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames");
+        let plain = decode_png(&root.join("potion-starting-item-ko-1080p.png")).unwrap();
+        let detail = decode_png(&root.join("starting-item-detail-ko-1080p.png")).unwrap();
+        let mut read = |crop: &Img| ocr.read(crop).unwrap();
+        let initial = decode_png(&root.join("instrument-rerolled-ko-1080p.png")).unwrap();
+        let mut from_start = Pipeline::new(3);
+        from_start.opening_offer = true;
+        assert!(matches!(from_start.run(&initial,None,Some(&mut read)),Outcome::Advice { .. }));
+        assert_eq!(from_start.tracker.start,0);
+        assert!(from_start.starting_items.valid());
+        from_start.opening_offer = false;
+        let Outcome::Advice { reading, .. } = from_start.run(&plain,Some("board"),Some(&mut read)) else { panic!("observing the first offer must avoid a later question") };
+        assert_eq!(reading.state.instruments,["Aberrant Sprout"]);
+        assert_eq!(reading.state.instrument_refreshes,Some(0));
+        let mut pipe = Pipeline::new(3);
+        let Outcome::Uncertain { reading } = pipe.run(&plain,None,Some(&mut read)) else { panic!("unknown item must ask, not guess") };
+        let help = crate::recovery::guidance(&plain,&reading,&layout_at(plain.width,plain.height,reading.ui()),pipe.help_icon);
+        assert!(help.pill.unwrap().sub.contains("클릭"));
+        let target = help.button.expect("the unknown icon is marked");
+        assert!(target.x < 1670.0 && target.x+target.w > 1670.0);
+        assert!(pipe.readvise().is_none(), "no stale recommendation while asking");
+        let mut baseline = None;
+        for height in [720,900,1080] {
+            for gain in [0.85,1.0,1.15] {
+                let mut frame = vorax_scan::pixels::resize(&detail,height*16/9,height);
+                for px in frame.data.chunks_exact_mut(4) { for c in &mut px[..3] { *c=(*c as f64*gain).min(255.0) as u8; } }
+                let mut trial = Pipeline::new(3);
+                let result = trial.run(&frame,None,Some(&mut read));
+                let Outcome::Advice { reading, .. } = result else {
+                    if let Outcome::Uncertain { reading } = result { panic!("{height}/{gain}: {:?}",reading.fields); }
+                    panic!("{height}/{gain}: detail did not recover");
+                };
+                assert_eq!(reading.state.instruments,["Aberrant Sprout"]);
+                if baseline.is_none() { baseline = Some(serde_json::to_value(&reading.state).unwrap()); }
+                assert_eq!(serde_json::to_value(&reading.state).unwrap(),baseline.clone().unwrap());
+                let saved = serde_json::to_vec(&trial.starting_items).unwrap();
+                let mut restarted = Pipeline::new(3);
+                restarted.starting_items = serde_json::from_slice(&saved).unwrap();
+                let Outcome::Advice { reading, .. } = restarted.run(&plain,None,Some(&mut read)) else { panic!("restart must remember confirmed starting art") };
+                assert_eq!(reading.state.instruments,["Aberrant Sprout"]);
+                assert_eq!(serde_json::to_value(&reading.state).unwrap(),baseline.clone().unwrap());
+            }
+        }
     }
 
     #[test]

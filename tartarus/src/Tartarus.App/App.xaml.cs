@@ -11,6 +11,14 @@ public partial class App : Application
         // The interface is in English (localization comes later): numbers as "12,800" and "6.4" whatever Windows' language.
         System.Globalization.CultureInfo.DefaultThreadCurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
         System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
+        if (e.Args is ["--ocr-stdio"])
+        {
+            // This worker has no UI, settings writes, capture, or game inputs.
+            try { CardOcrServer.Run(); }
+            catch (Exception ex) { Console.Error.WriteLine(ex.Message); }
+            Shutdown();
+            return;
+        }
         // A new version put in this install's place by itself (Updates.StartInstall), then started there.
         if (e.Args is ["--install-update", _, _, ..])
         {
