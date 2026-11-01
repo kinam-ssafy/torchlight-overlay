@@ -9,7 +9,7 @@ use crate::pipeline::{Outcome, Pipeline};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
-use vorax_scan::live::{classify, log_time, Follower, OpeningOffer, Settler, Trigger};
+use vorax_scan::live::{classify_current as classify, log_time, Follower, OpeningOffer, Settler, Trigger};
 
 pub struct Options {
     pub log: Option<PathBuf>,
@@ -134,7 +134,7 @@ pub fn run(opts: Options, tx: Sender<ToUi>, waker: Waker, rx: Receiver<ToWorker>
                 ToWorker::Snap => manual = true,
                 ToWorker::Shelley(level) => {
                     pipe.shelley = level;
-                    if let Some((plan, w, h)) = pipe.readvise() {
+                    if let Some((plan, w, h)) = pipe.readvise().filter(|_| !settler.over) {
                         send(ToUi::Show(plan, w, h));
                     }
                 }
@@ -153,6 +153,7 @@ pub fn run(opts: Options, tx: Sender<ToUi>, waker: Waker, rx: Receiver<ToWorker>
                     let mut next = Follower::new(p.clone());
                     next.poll(); // establish the offset before reading history, so new actions cannot be skipped
                     opening = OpeningOffer::from_recent_log(&p);
+                    settler = Settler::from_recent_log(&p);
                     pipe.opening_offer = opening.is_initial();
                     note(&format!("startup log: initial instrument offer = {}", pipe.opening_offer));
                     follower = Some(next);
@@ -170,7 +171,7 @@ pub fn run(opts: Options, tx: Sender<ToUi>, waker: Waker, rx: Receiver<ToWorker>
                     }
                     opening.feed(&lines);
                     pipe.opening_offer = opening.is_initial();
-                    settler.feed(&lines, now_ms());
+                    settler.feed_current(&lines, now_ms());
                     if lines.iter().any(|line| matches!(classify(line), Some(Trigger::Board | Trigger::Screen | Trigger::Over))) {
                         pipe.invalidate_display();
                         motion = MotionWatch::default();
@@ -192,6 +193,14 @@ pub fn run(opts: Options, tx: Sender<ToUi>, waker: Waker, rx: Receiver<ToWorker>
                 relook_at = None;
             }
             was_over = settler.over;
+        }
+        // A manual request or a retry queued before Escape must not redraw help
+        // over the world. Reopening schedules a fresh read without dropping tools.
+        if settler.over {
+            manual = false;
+            retry = None;
+            relook_at = None;
+            motion = MotionWatch::default();
         }
         if last_log_check.elapsed() >= Duration::from_secs(1) {
             last_log_check = Instant::now();
@@ -233,7 +242,7 @@ pub fn run(opts: Options, tx: Sender<ToUi>, waker: Waker, rx: Receiver<ToWorker>
             // while it reads and only change if what it finds does
             let quiet = (relook || again.is_some()) && due.is_none() && !manual;
             pipe.invalidate_display();
-            let unread = read(&capturer, ocr.as_ref(), &mut pipe, trigger, manual || relook, quiet, opts.frames.as_deref(), &send);
+            let unread = read(&capturer, ocr.as_ref(), &mut pipe, trigger, manual || relook, quiet, retries >= RETRIES, opts.frames.as_deref(), &send);
             if pipe.starting_items != saved_memory {
                 let bytes = serde_json::to_vec(&pipe.starting_items).expect("finite icon signatures");
                 let pending = memory_path.with_extension("tmp");
@@ -290,7 +299,7 @@ fn last_game_line_age(path: &Path) -> Option<Duration> {
 
 /// Takes a picture, reads it and advises; true when the board needs another read.
 #[allow(clippy::too_many_arguments)]
-fn read(capturer: &Capturer, ocr: Option<&Ocr>, pipe: &mut Pipeline, trigger: Option<&str>, now: bool, quiet: bool, frames: Option<&Path>, send: &dyn Fn(ToUi)) -> bool {
+fn read(capturer: &Capturer, ocr: Option<&Ocr>, pipe: &mut Pipeline, trigger: Option<&str>, now: bool, quiet: bool, transition_help: bool, frames: Option<&Path>, send: &dyn Fn(ToUi)) -> bool {
     let Some(game) = find_game_window() else {
         note("the game's window isn't open");
         status("게임 창 연결 대기", "토치라이트를 실행하세요.", "창 없음");
@@ -365,6 +374,15 @@ fn read(capturer: &Capturer, ocr: Option<&Ocr>, pipe: &mut Pipeline, trigger: Op
         }
         Outcome::Animating => {
             note(&format!("{}: picture {grabbed} ms, a card was flying off: looking again", trigger.unwrap_or("manual")));
+            if transition_help {
+                let plan = crate::draw::Plan { help:true, pill:Some(crate::draw::Pill {
+                    main:"카드 확인 필요".into(), sub:"카드를 클릭해 펼쳐 주세요. 확인 버튼은 누르지 마세요".into(), dim:false,
+                }), ..Default::default() };
+                let pill = plan.pill.as_ref().unwrap();
+                status(&pill.main,&pill.sub,"추천 보류 / 확인 안내");
+                let (w,h) = vorax_scan::window::windowed_game(&frame).map_or((frame.width,frame.height),|r|(r.w as usize,r.h as usize));
+                send(ToUi::Show(plan,w,h));
+            }
         }
         Outcome::Closing => {
             status("수술 준비 완료", "다음 판을 기다립니다.", "완료");

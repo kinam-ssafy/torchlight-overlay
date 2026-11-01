@@ -49,7 +49,7 @@ impl OpeningOffer {
             let line = line.as_ref();
             if line.contains("S13GamePlay_C_StartGameBtn") {
                 self.0 = true;
-            } else if classify(line) == Some(Trigger::Over)
+            } else if classify_current(line) == Some(Trigger::Over)
                 || line.contains("normal-click ComfirmBtn")
                 || line.contains("normal-click ConfirmBtn")
                 || line.contains("KYZ_Card_Selected_Confirm") {
@@ -63,20 +63,25 @@ impl OpeningOffer {
     /// Bound startup IO even when the game's log has grown to gigabytes. If the start event
     /// fell outside this tail, the screenshot must stand on its own; never infer an empty panel.
     pub fn from_recent_log(path: &std::path::Path) -> Self {
-        use std::io::{Read, Seek, SeekFrom};
         let mut result = Self::default();
-        let Ok(mut file) = std::fs::File::open(path) else { return result; };
-        let Ok(size) = file.metadata().map(|m| m.len()) else { return result; };
-        let offset = size.saturating_sub(8 << 20);
-        if file.seek(SeekFrom::Start(offset)).is_err() { return result; }
-        let mut bytes = Vec::new();
-        if file.take(size - offset).read_to_end(&mut bytes).is_err() { return result; }
-        let text = String::from_utf8_lossy(&bytes);
-        let mut lines = text.lines();
-        if offset > 0 { lines.next(); }
-        for line in lines { result.feed(&[line]); }
+        for line in recent_log(path).lines() { result.feed(&[line]); }
         result
     }
+}
+
+fn recent_log(path: &std::path::Path) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let read = || -> std::io::Result<String> {
+        let mut file = std::fs::File::open(path)?;
+        let size = file.metadata()?.len();
+        let offset = size.saturating_sub(8 << 20);
+        file.seek(SeekFrom::Start(offset))?;
+        let mut bytes = Vec::new();
+        file.take(size - offset).read_to_end(&mut bytes)?;
+        let text = String::from_utf8_lossy(&bytes);
+        Ok(if offset > 0 { text.split_once('\n').map_or("", |(_,rest)|rest).to_owned() } else { text.into_owned() })
+    };
+    read().unwrap_or_default()
 }
 
 pub fn classify(line: &str) -> Option<Trigger> {
@@ -86,6 +91,35 @@ pub fn classify(line: &str) -> Option<Trigger> {
         }
     }
     None
+}
+
+/// Current game page lifecycle, including Escape's `Destory` event. Keep the
+/// original classifier above for the upstream log-replay contract.
+pub fn classify_current(line: &str) -> Option<Trigger> {
+    if !line.contains("S13GamePlayMain") { return classify(line); }
+    if classify(line) == Some(Trigger::Refresh) { return Some(Trigger::Refresh); }
+    let game = line.split_once("[Game]").map_or(line, |(_,rest)|rest).trim();
+    let event = if let Some(rest) = game.strip_prefix("TipMsgShowMgr@DispatchPageRunChange PageName") {
+        let (page, state) = rest.trim().strip_prefix('=')?.split_once(',')?;
+        let state = state.trim().strip_prefix("PageRunState")?.trim().strip_prefix('=')?.trim();
+        Some((page.trim(), state))
+    } else if let Some(rest) = game.strip_prefix("S13GamePlayMain ") {
+        Some(("S13GamePlayMain", rest.trim()))
+    } else if game.starts_with("PageBase@") || game.starts_with("Page@") {
+        ["OpenView", "CloseView"].iter().find_map(|state| {
+            let rest = game.split_once(&format!("{state} "))?.1;
+            let page = rest.split_whitespace().next()?;
+            let page = page.split_once('_').filter(|(id,_)| id.chars().all(|c|c.is_ascii_digit())).map_or(page,|(_,p)|p);
+            Some((page.strip_suffix("Ctrl").unwrap_or(page), *state))
+        })
+    } else { None };
+    let (page, state) = event?;
+    if page != "S13GamePlayMain" { return None; }
+    match state {
+        "OpenView" | "Run" => Some(Trigger::Screen),
+        "CloseView" | "Hide" | "Destory" | "Destroy" => Some(Trigger::Over),
+        _ => None,
+    }
 }
 
 pub fn is_animation(line: &str) -> bool {
@@ -128,11 +162,26 @@ pub struct Settler {
 }
 
 impl Settler {
+    pub fn from_recent_log(path: &std::path::Path) -> Self {
+        let mut result = Self::default();
+        for line in recent_log(path).lines() { result.feed_current(&[line], 0.0); }
+        result.cancel(); // Historical events establish visibility, never queue a stale scan.
+        result
+    }
+
     pub fn feed<S: AsRef<str>>(&mut self, lines: &[S], now: f64) {
+        self.feed_with(lines, now, classify);
+    }
+
+    pub fn feed_current<S: AsRef<str>>(&mut self, lines: &[S], now: f64) {
+        self.feed_with(lines, now, classify_current);
+    }
+
+    fn feed_with<S: AsRef<str>>(&mut self, lines: &[S], now: f64, classifier: fn(&str) -> Option<Trigger>) {
         let start = |kind, now| Pending { kind, t0: now, last_anim: now, done_at: None, acted: false };
         for line in lines {
             let line = line.as_ref();
-            match classify(line) {
+            match classifier(line) {
                 Some(Trigger::Screen) => {
                     self.over = false;
                     self.refreshes = 0;

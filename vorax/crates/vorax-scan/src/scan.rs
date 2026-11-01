@@ -91,6 +91,22 @@ fn quality(r: &Reading) -> f64 {
 /// isn't at the layout's place; `correct`: map the colours to a normal capture's when they're far off; `ui`: the
 /// game's interface scale; `upstream`: without this port's own fixes (tanks.rs's empty_glow).
 pub fn scan_with(captured: &Img, data: &ScanData, pictures: bool, hand_dy: Option<f64>, correct: bool, ui: f64, upstream: bool) -> Reading {
+    scan_with_presence(captured,data,pictures,hand_dy,correct,ui,upstream,None)
+}
+
+/// The caller has measured a complete fan's borders. Text density is not motion:
+/// short descriptions can be sparse even when every card is fully visible.
+/// Titles and every board field still need their normal confidence checks.
+pub fn scan_bordered_hand(captured: &Img, data: &ScanData, ui: f64, size: usize) -> Reading {
+    let first = scan_with_presence(captured,data,false,Some(0.0),true,ui,false,Some(size));
+    if first.debug.as_ref().is_some_and(|d|d.corrected) && first.has(|p|matches!(p,Problem::Unreadable { .. })) {
+        let original = scan_with_presence(captured,data,false,Some(0.0),false,ui,false,Some(size));
+        if quality(&original) > quality(&first) { return original; }
+    }
+    first
+}
+
+fn scan_with_presence(captured: &Img, data: &ScanData, pictures: bool, hand_dy: Option<f64>, correct: bool, ui: f64, upstream: bool, bordered: Option<usize>) -> Reading {
     let l0 = layout_at(captured.width, captured.height, ui);
     let (corrected_img, off, corrected) = normal_colours(captured, &data.levels, &read_areas(&l0));
     let (corrected_img, corrected) = if correct { (corrected_img, corrected) } else { (None, false) };
@@ -103,7 +119,7 @@ pub fn scan_with(captured: &Img, data: &ScanData, pictures: bool, hand_dy: Optio
     let frame = Some(Frame { width: img.width, height: img.height });
     let bare = |p: Problem| Reading { state: empty_state(), fields: Fields::new(), problems: vec![p], frame: frame.clone(), instrument_ranks: None, hand_ranks: None, icons_known: None, hand_pending: None, hand_size: None, ui: None, debug: None, hand_dy: None };
 
-    let present = cards_present(img, &l);
+    let present = bordered.unwrap_or_else(|| cards_present(img, &l));
     if present == 1 || present == 2 {
         return bare(Problem::Animating);
     }
@@ -225,7 +241,7 @@ pub fn scan_with(captured: &Img, data: &ScanData, pictures: bool, hand_dy: Optio
         instrument_ranks: Some(inst.ranks),
         icons_known: Some(inst.known),
         hand_pending: pending.then_some(true),
-        hand_size: pending.then(|| if phase == ScreenPhase::Protocol { 3 } else { fan_size(img, &l) }),
+        hand_size: pending.then(|| bordered.unwrap_or_else(|| if phase == ScreenPhase::Protocol { 3 } else { fan_size(img, &l) })),
         hand_ranks: hand.ranks,
         ui: (ui != 1.0).then_some(ui),
         debug: Some(ReadDebug { off: js_round(off * 1000.0) / 1000.0, corrected, tanks: tanks.into_iter().map(|t| t.debug).collect(), ms: None }),

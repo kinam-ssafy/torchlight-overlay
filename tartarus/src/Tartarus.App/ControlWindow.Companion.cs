@@ -91,6 +91,7 @@ public partial class ControlWindow
     private void UpdateAutomaticContent()
     {
         if (!_companionReady || PreviewMode || !_settings.AutoDetectContent) return;
+        if (!_gameAvailable) StopVorax();
         ActivateContent(_gameAvailable ? _gameLog?.Content ?? GameContent.None : GameContent.None);
         ShowContentStatus();
     }
@@ -112,7 +113,10 @@ public partial class ControlWindow
         _hints.Clear();
         ClearHint();
         StopCapture();
-        StopVorax();
+        // Closing a preparation page is not ending the run. The native worker hides its
+        // marks on Hide and resumes on Run; keep OCR and confirmed tool history alive.
+        if (!_settings.AutoDetectContent || !_gameAvailable || content == GameContent.Tartarus)
+            StopVorax();
         _frame = null;
         _scan = null;
         _sandbox = _scannedSandbox = _lastRead = null;

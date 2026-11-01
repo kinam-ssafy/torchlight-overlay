@@ -185,10 +185,14 @@ pub fn icon_rects(img: &Img, l: &Layout) -> Option<Vec<Rect>> {
         if let Some((_, end)) = groups.last_mut().filter(|(_, end)| (x - *end) as f64 <= 16.0 * l.k) { *end = x; }
         else { groups.push((x,x)); }
     }
-    // Isolated bright scenery pixels are not icon components, particularly after downsampling.
-    groups.retain(|(a,b)| (*b-*a+1) as f64 >= 12.0*l.k);
+    // The strip also crosses animated scenery. Validate each component's size and
+    // dark icon backdrop before counting slots; scenery must not reject the real panel.
+    groups.retain(|(a,b)| {
+        let width = (*b-*a+1) as f64;
+        width >= 12.0*l.k && width <= 100.0*l.k
+            && holds_an_icon(img,&Rect::new((*a+*b) as f64/2.0-first.w/2.0,first.y,first.w,first.h))
+    });
     if groups.is_empty() || groups.len() > l.instrument_icon.len() { return None; }
-    if groups.iter().any(|(a,b)| (*b-*a+1) as f64 > 100.0*l.k) { return None; }
     Some(groups.iter().rev().map(|(a,b)| Rect::new((*a+*b) as f64/2.0-first.w/2.0, first.y, first.w, first.h)).collect())
 }
 

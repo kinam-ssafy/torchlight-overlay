@@ -25,6 +25,8 @@ mod tests {
     fn names_are_unique_and_known() {
         let data = crate::scan_data();
         let all: Vec<_> = data.names.potion.iter().chain(&data.names.instrument).chain(&data.names.protocol).collect();
+        assert_eq!(names().len(), all.len(), "every supported identifier needs Korean text");
+        for en in &all { assert!(names().contains_key(*en), "missing Korean title: {en}"); }
         let mut values = std::collections::HashSet::new();
         for (en, ko) in names() {
             assert!(all.contains(&en), "unknown card: {en}");
@@ -42,10 +44,16 @@ mod tests {
         for phase in [&d.names.potion, &d.names.instrument, &d.names.protocol] {
             for english in phase {
                 let korean = name(english);
-                if korean == english { continue; }
+                assert_ne!(korean, english, "missing Korean title: {english}");
                 let ocr = korean.replace(' ', "").replace('-', " ");
                 let actual = name_fit(english, &ocr);
                 let other = phase.iter().filter(|n| *n != english).map(|n| name_fit(n, &ocr)).fold(f64::NEG_INFINITY, f64::max);
+                // The upstream generic Xenopanacea identifier is a family label, not a
+                // current card. Its truncated title must remain ambiguous between variants.
+                if english == "Xenopanacea" {
+                    assert!(actual >= 6.0 && actual - other < 3.0);
+                    continue;
+                }
                 assert!(actual >= 6.0 && actual - other >= 3.0, "ambiguous {english} ({korean}): {actual} vs {other}");
             }
         }

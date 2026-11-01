@@ -142,8 +142,22 @@ impl Pipeline {
         let raw = match ocr {
             Some(read) => {
                 let mut names = scan(&img, data, false);
-                let (dy, ui) = (names.hand_dy.unwrap_or(0.0), names.ui());
                 let korean = std::env::var("VORAX_LANGUAGE").map_or(true, |v| v == "ko");
+                if korean && names.has(|p| matches!(p,Problem::Animating)) {
+                    for ui in vorax_scan::layout::UI_SCALES {
+                        let layout = layout_at(img.width,img.height,ui);
+                        let size = vorax_scan::cards::fan_size(&img,&layout);
+                        if let Some(frames) = crate::card_frame::detect(&img,&layout,size) {
+                            let candidate = vorax_scan::scan::scan_bordered_hand(&img,data,ui,size);
+                            if candidate.fields.get("round").is_some_and(|f|f.sure) {
+                                names = candidate;
+                                fitted = Some(frames);
+                                break;
+                            }
+                        }
+                    }
+                }
+                let (dy, ui) = (names.hand_dy.unwrap_or(0.0), names.ui());
                 let layout = layout_at(img.width, img.height, ui).shifted_hand(dy);
                 if korean {
                     if let Some(mut panel) = vorax_scan::instruments::refine_with_starting(&img, &layout, data, &self.starting_items) {
@@ -176,7 +190,7 @@ impl Pipeline {
                         names.fields.extend(panel.fields);
                     }
                 }
-                fitted = crate::card_frame::detect(&img, &layout, names.hand_size.unwrap_or(3));
+                fitted = fitted.or_else(|| crate::card_frame::detect(&img, &layout, names.hand_size.unwrap_or(3)));
                 // OCR and drawing share the measured card geometry, including a selected card raised
                 // above the fan. Convert the physical centre to the title reader's reference centre.
                 let positions = fitted.as_ref().filter(|_| korean).map(|frames| frames.iter().map(|(c, _, h)|
@@ -576,6 +590,80 @@ mod tests {
             assert_eq!(reading.state.instrument_refreshes, Some(0));
             assert!(trustworthy(&reading));
         } }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires Korean OCR and the bundled helper"]
+    fn owned_tool_detail_restores_a_mid_run_panel() {
+        use super::*;
+        unsafe { let _ = windows::Win32::System::WinRT::RoInitialize(windows::Win32::System::WinRT::RO_INIT_MULTITHREADED); }
+        let ocr = crate::app::ocr::Ocr::new().unwrap();
+        let frame = decode_png(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames/owned-tool-detail-ko-1080p.png")).unwrap();
+        let mut read = |crop: &Img| ocr.read(crop).unwrap();
+        for gain in [0.85,1.0,1.15] {
+            let mut changed=frame.clone();
+            for px in changed.data.chunks_exact_mut(4) { for c in &mut px[..3] { *c=(*c as f64*gain).min(255.0) as u8; } }
+            let mut pipe=Pipeline::new(3);
+            let Outcome::Advice { reading,.. }=pipe.run(&changed,None,Some(&mut read)) else { panic!("{gain}: scenery must not reject the real tool panel"); };
+            assert_eq!(reading.state.instruments,["Contracted Claws","Rawhide Restraint"]);
+            assert_eq!(reading.state.round,Some(4));
+            // The open explanation is not needed once the panel's own pixels are recognized.
+            for y in 470..940 { for x in 40..380 { changed.data[(y*changed.width+x)*4..(y*changed.width+x)*4+3].fill(10); } }
+            assert!(matches!(pipe.run(&changed,None,Some(&mut read)),Outcome::Advice { .. }));
+        }
+        let supreme=decode_png(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames/supreme-pill-ko-1080p.png")).unwrap();
+        let mut pipe=Pipeline::new(3);
+        let Outcome::Uncertain { reading }=pipe.run(&supreme,None,Some(&mut read)) else { panic!("a fresh process still needs the unrecognized third tool"); };
+        assert_eq!(reading.state.hand,["Twin Hormone - Bone Sentry","Compound Revitalizing Pill","Slender-Limb Powder - Pest"]);
+        assert_eq!(reading.state.round,Some(10));
+        assert!((0..3).all(|i|reading.fields[&format!("hand{i}")].sure));
+        assert!(!reading.fields["instrument2"].sure);
+        // The actual ongoing run already confirmed these picks. An unrecognized card
+        // must not discard that history, and the complete catalog should resume advice.
+        pipe.tracker.owned=["Contracted Claws","Rawhide Restraint","Tanned Leather Restraint"].map(str::to_owned).to_vec();
+        pipe.tracker.rounds=vec![1,4,6];
+        assert!(matches!(pipe.run(&supreme,None,Some(&mut read)),Outcome::Advice { .. }));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires Korean OCR and the bundled helper"]
+    fn short_descriptions_use_borders_instead_of_a_motion_guess() {
+        use super::*;
+        unsafe { let _ = windows::Win32::System::WinRT::RoInitialize(windows::Win32::System::WinRT::RO_INIT_MULTITHREADED); }
+        let ocr = crate::app::ocr::Ocr::new().unwrap();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames");
+        let source = decode_png(&root.join("potion-sparse-text-ko-1080p.png")).unwrap();
+        assert!(scan(&source,scan_data(),false).has(|p|matches!(p,Problem::Animating)),"regression: static text-density heuristic");
+        let mut read = |crop: &Img| ocr.read(crop).unwrap();
+        for height in [720,900,1080] { for gain in [0.85,1.0,1.15] {
+            let mut frame = vorax_scan::pixels::resize(&source,height*16/9,height);
+            for px in frame.data.chunks_exact_mut(4) { for c in &mut px[..3] { *c=(*c as f64*gain).min(255.0) as u8; } }
+            let mut pipe = Pipeline::new(3);
+            let outcome = pipe.run(&frame,None,Some(&mut read));
+            let (reading, actionable) = match outcome {
+                Outcome::Advice { reading, .. } => (reading,true),
+                Outcome::Uncertain { reading } => (reading,false),
+                _ => panic!("{height}/{gain}: full stationary fan must reach recognition"),
+            };
+            assert_eq!(reading.state.hand,["Xeno-Hormone","Spinal Solution - Aemberon","Potion Kit (Large)"]);
+            assert_eq!(reading.state.round,Some(7));
+            assert_eq!(reading.state.potion_refreshes,Some(2));
+            assert!((0..3).all(|i|reading.fields[&format!("hand{i}")].sure));
+            if height == 1080 && gain == 1.0 { assert!(actionable,"the actual stopped screen must recover"); }
+            if !actionable {
+                assert!(!trustworthy(&reading),"unclear tank/icon values must still withhold advice");
+                assert!(crate::recovery::guidance(&frame,&reading,&layout_at(frame.width,frame.height,reading.ui()),pipe.help_icon).pill.is_some());
+            }
+            eprintln!("sparse fan {height}/{gain}: titles complete, advice={actionable}");
+        } }
+        for (left,right) in [(765,965),(970,1165),(1165,1390)] {
+            let mut covered = source.clone();
+            for y in 665..985 { for x in left..right { covered.data[(y*covered.width+x)*4..(y*covered.width+x)*4+3].fill(10); } }
+            let mut pipe = Pipeline::new(3);
+            assert!(!matches!(pipe.run(&covered,None,Some(&mut read)),Outcome::Advice { .. }),"missing card {left}: do not invent a complete fan");
+        }
     }
 
     #[cfg(windows)]
