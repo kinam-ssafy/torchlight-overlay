@@ -2,7 +2,7 @@
 //! advisor, lay out the marks for the screen the overlay covers. Shared by the live app and --preview.
 
 use crate::draw::{plan_for, Plan};
-use vorax::advisor::{advise_plan, Advice};
+use vorax::advisor::{advise_for_goal, Advice};
 use vorax_scan::layout::layout_at;
 use vorax_scan::live::carried_round;
 use vorax_scan::pixels::Img;
@@ -339,7 +339,7 @@ impl Pipeline {
                 return (cached, true);
             }
         }
-        let advice = advise_plan(state, Some(count), true);
+        let advice = advise_for_goal(state, Some(count), vorax::bot::Goal::Mean, false, true);
         self.last_advice = Some((key, count, advice.clone()));
         (advice, false)
     }
@@ -753,7 +753,11 @@ mod tests {
         let mut pipe = Pipeline::new(3);
         let mut titles = ["Targeted Xeno-Hormone", "Osteolytic Ointment", "Mutagenic Powder"].into_iter();
         let mut read = |_: &Img| vorax_scan::korean::name(titles.next().unwrap()).to_owned();
-        let Outcome::Advice { plan, .. } = pipe.run(&frame, None, Some(&mut read)) else { panic!("round three must be readable") };
+        let Outcome::Advice { .. } = pipe.run(&frame, None, Some(&mut read)) else { panic!("round three must be readable") };
+        // Test an actual card recommendation independently of reroll strategy.
+        let cached = &mut pipe.last_advice.as_mut().unwrap().2;
+        cached.best = vorax::advisor::Best::Card(cached.ranking[0].clone());
+        let (plan, _, _) = pipe.readvise().unwrap();
         assert!(plan.card.is_some());
         pipe.card_frames = None;
         let (fallback, ..) = pipe.readvise().unwrap();
@@ -885,7 +889,14 @@ mod tests {
         let mut pipe = Pipeline::new(3);
         let mut names = ["Anesthetic Tincture - Aemberon", "Osteolytic Ointment", "Green Bile Solution"].into_iter();
         let mut read = |_: &Img| vorax_scan::korean::name(names.next().unwrap()).to_owned();
-        let Outcome::Advice { reading, plan, .. } = pipe.run(&frame, None, Some(&mut read)) else { panic!("selected fan must read") };
+        let Outcome::Advice { reading, advice, .. } = pipe.run(&frame, None, Some(&mut read)) else { panic!("selected fan must read") };
+        assert_eq!(advice.goal, vorax::bot::Goal::Mean);
+        // Exercise the same raised third card regardless of which strategy wins.
+        // The mean policy can recommend a reroll on this board; geometry must
+        // remain covered without asserting the old target policy's decision.
+        let cached = &mut pipe.last_advice.as_mut().unwrap().2;
+        cached.best = vorax::advisor::Best::Card(cached.ranking.iter().find(|r| r.index == 2).unwrap().clone());
+        let (plan, _, _) = pipe.readvise().unwrap();
         let original = serde_json::to_value(&pipe.last_advice).unwrap();
         let selected = plan.card.unwrap();
         assert!((selected.0.cy - 795.0).abs() < 8.0);

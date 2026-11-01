@@ -62,7 +62,7 @@ struct Game {
 /// with a share `eps` of moves played at random so boards a better player reaches are seen too.
 fn play(seed: u32, eps: f64, smart: bool) -> Game {
     let d = data();
-    let chooser = Chooser::Ev(Policy { samples: 2, horizon: 0, roll_samples: None, steer: Some(0.3), value: Some(smart) });
+    let chooser = Chooser::Ev(Policy { samples: 2, horizon: 0, roll_samples: None, steer: Some(0.3), value: Some(smart), goal: Goal::Target });
     let mut s = create_game(d.default_settings, None, Some(seed));
     let mut rng = Rng::new(mix(seed, 0xbeef));
     let mut boards = Vec::with_capacity(40);

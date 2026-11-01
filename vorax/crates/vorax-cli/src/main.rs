@@ -1,7 +1,7 @@
 //! vorax: the Rust Vorax advisor and simulator from the command line. Read-only: it prints advice, it never
 //! touches the game.
 //!
-//!   vorax advise [screen.json] [--futures N] [--quick] [--single]   advice for a screen (stdin when no file)
+//!   vorax advise [screen.json] [--futures N] [--goal target|mean] [--quick] [--single]   advice for a screen (stdin when no file)
 //!   vorax bench [fixtures-dir]                                      advice timings against the TypeScript's
 //!   vorax sim [--games N] [--seed0 S] [--policy value|steer|solver] whole games, score stats
 //!   vorax read <screenshot.png> [--advise]                          read a screenshot of the game (and advise on it)
@@ -58,7 +58,7 @@ fn main() {
             _ => fail("usage: vorax gate champion.txt challenger.txt"),
         },
         _ => {
-            eprintln!("usage: vorax advise [screen.json] [--futures N] [--quick] [--single] | bench [fixtures] | sim [--games N] [--seed0 S] [--policy value|steer|solver|oracle] [--futures N] [--scores out.txt] | info | train [--games N] --out model.json | gate a.txt b.txt   (--threads N, --model m.json|none on any)");
+            eprintln!("usage: vorax advise [screen.json] [--futures N] [--goal target|mean] [--quick] [--single] | bench [fixtures] | sim [--games N] [--seed0 S] [--policy value|steer|solver|oracle] [--futures N] [--goal target|mean] [--scores out.txt] | info | train [--games N] --out model.json | gate a.txt b.txt   (--threads N, --model m.json|none on any)");
             std::process::exit(if cmd == "help" || cmd == "--help" { 0 } else { 2 });
         }
     }
@@ -71,6 +71,14 @@ fn info() {
         Some(vorax::data::ValueModel::Trees { trees, .. }) => format!("{} trees", trees.len()),
         None => "none (score)".into(),
     });
+}
+
+fn goal(args: &[String]) -> Goal {
+    match arg::<String>(args, "--goal").as_deref().unwrap_or("target") {
+        "target" => Goal::Target,
+        "mean" => Goal::Mean,
+        _ => fail("--goal must be target or mean"),
+    }
 }
 
 fn advise(args: &[String]) {
@@ -87,7 +95,7 @@ fn advise(args: &[String]) {
     let advice = if args.iter().any(|a| a == "--quick") {
         advisor::advise(&screen, arg(args, "--samples").unwrap_or(16), false, par)
     } else {
-        advisor::advise_plan(&screen, arg(args, "--futures"), par)
+        advisor::advise_for_goal(&screen, arg(args, "--futures"), goal(args), false, par)
     };
     println!("{}", serde_json::to_string_pretty(&advice).unwrap());
 }
@@ -111,7 +119,7 @@ fn bench(args: &[String]) {
             let mut best = f64::INFINITY;
             for _ in 0..reps {
                 let t = Instant::now();
-                std::hint::black_box(advisor::advise_plan(&screen, arg(args, "--futures"), par));
+                std::hint::black_box(advisor::advise_for_goal(&screen, arg(args, "--futures"), goal(args), false, par));
                 best = best.min(t.elapsed().as_secs_f64() * 1000.0);
             }
             best
@@ -131,8 +139,8 @@ fn sim(args: &[String]) {
     let policy: String = arg(args, "--policy").unwrap_or_else(|| "value".into());
     let (chooser, picker) = match policy.as_str() {
         // the player inside the advice's futures
-        "value" => (Chooser::Ev(Policy { samples: 2, horizon: 0, roll_samples: None, steer: None, value: Some(true) }), Picker::Value),
-        "steer" => (Chooser::Ev(Policy { samples: 4, horizon: 0, roll_samples: None, steer: Some(0.3), value: None }), Picker::Value),
+        "value" => (Chooser::Ev(Policy { samples: 2, horizon: 0, roll_samples: None, steer: None, value: Some(true), goal: Goal::Target }), Picker::Value),
+        "steer" => (Chooser::Ev(Policy { samples: 4, horizon: 0, roll_samples: None, steer: Some(0.3), value: None, goal: Goal::Target }), Picker::Value),
         // the Solver's own advice at every move: look-ahead potions, board-aware instruments (slow: a full advice per move)
         "solver" => {
             // --futures N: futures per option for potions and instruments (the Solver's default: 64)
@@ -140,8 +148,8 @@ fn sim(args: &[String]) {
             // --halving: the potions' futures by successive halving (the same number on average)
             let halving = args.iter().any(|a| a == "--halving").then_some(true);
             (
-                Chooser::Plan(LookAhead { playouts: n, halving, ..advisor::LOOK_AHEAD }),
-                Picker::Board { playouts: n, rollout: Policy { samples: 4, horizon: 0, roll_samples: None, steer: None, value: Some(true) }, goal: Goal::Target, refresh_playouts: n },
+                Chooser::Plan(LookAhead { playouts: n, halving, goal: goal(args), ..advisor::LOOK_AHEAD }),
+                Picker::Board { playouts: n, rollout: Policy { samples: 4, horizon: 0, roll_samples: None, steer: None, value: Some(true), goal: goal(args) }, goal: goal(args), refresh_playouts: n },
             )
         }
         // a cheater that sees the real upcoming cards: the ceiling no strategy can beat

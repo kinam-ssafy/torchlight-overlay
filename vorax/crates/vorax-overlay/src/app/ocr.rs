@@ -71,6 +71,12 @@ impl Ocr {
     }
 
     fn windows_engine(korean: bool) -> windows::core::Result<OcrEngine> {
+        // windows-rs caches activation factories for the process. Keep their
+        // apartment alive when the last OCR worker exits, before another starts.
+        // Otherwise Language::CreateLanguage can call an unloaded factory vtable.
+        // The single usage cookie intentionally lives until process teardown.
+        static MTA: std::sync::OnceLock<windows::core::Result<()>> = std::sync::OnceLock::new();
+        MTA.get_or_init(|| unsafe { windows::Win32::System::Com::CoIncrementMTAUsage().map(|_| ()) }).clone()?;
         let language = Language::CreateLanguage(&HSTRING::from(if korean { "ko-KR" } else { "en-US" }))?;
         if OcrEngine::IsLanguageSupported(&language)? { OcrEngine::TryCreateFromLanguage(&language) }
         else { OcrEngine::TryCreateFromUserProfileLanguages() }
@@ -120,5 +126,25 @@ impl Ocr {
             lines.push(line.Text()?.to_string());
         }
         Ok(lines.join("\n"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[ignore = "requires installed Korean Windows OCR"]
+    fn windows_ocr_factory_survives_worker_restart() {
+        use windows::Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED};
+        for _ in 0..8 {
+            std::thread::spawn(|| {
+                unsafe { RoInitialize(RO_INIT_MULTITHREADED).unwrap(); }
+                let language = {
+                    let engine = super::Ocr::windows_engine(true).unwrap();
+                    engine.RecognizerLanguage().unwrap().LanguageTag().unwrap().to_string()
+                };
+                unsafe { RoUninitialize(); }
+                assert_eq!(language.split('-').next(), Some("ko"));
+            }).join().unwrap();
+        }
     }
 }

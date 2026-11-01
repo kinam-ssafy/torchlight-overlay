@@ -1,0 +1,977 @@
+{
+  "futures": 1024,
+  "threads": 8,
+  "frames": 2,
+  "repetitions": 3,
+  "includesCapture": false,
+  "summary": {
+    "before": {
+      "read_ms": 1171.0468,
+      "advice_ms": 268,
+      "total_ms": 1439.42995,
+      "sameFrameMedianMs": 81.8603
+    },
+    "after": {
+      "read_ms": 1163.4148500000001,
+      "advice_ms": 240.5,
+      "total_ms": 1405.5533,
+      "sameFrameMedianMs": 83.09425
+    }
+  },
+  "rows": [
+    {
+      "frame": "initial-ko-1080p.png",
+      "rep": 0,
+      "variant": "before",
+      "runs": [
+        {
+          "run": 0,
+          "read_ms": 1120.1030999999998,
+          "advice_ms": 328,
+          "cached": false,
+          "total_ms": 1449.3225,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 770212.0,
+            "end": {
+              "activity": 770211.671875,
+              "reached": 0.6416015625
+            }
+          }
+        },
+        {
+          "run": 1,
+          "read_ms": 56.3568,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 56.9518,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 770212.0,
+            "end": {
+              "activity": 770211.671875,
+              "reached": 0.6416015625
+            }
+          }
+        },
+        {
+          "run": 2,
+          "read_ms": 54.3673,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 55.7256,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 770212.0,
+            "end": {
+              "activity": 770211.671875,
+              "reached": 0.6416015625
+            }
+          }
+        },
+        {
+          "run": 3,
+          "read_ms": 50.1765,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 50.721000000000004,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 770212.0,
+            "end": {
+              "activity": 770211.671875,
+              "reached": 0.6416015625
+            }
+          }
+        },
+        {
+          "run": 4,
+          "read_ms": 51.231899999999996,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 51.5568,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 770212.0,
+            "end": {
+              "activity": 770211.671875,
+              "reached": 0.6416015625
+            }
+          }
+        }
+      ]
+    },
+    {
+      "frame": "initial-ko-1080p.png",
+      "rep": 0,
+      "variant": "after",
+      "runs": [
+        {
+          "run": 0,
+          "read_ms": 1060.3564000000001,
+          "advice_ms": 309,
+          "cached": false,
+          "total_ms": 1370.2856,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 1075001.0,
+            "end": {
+              "activity": 1075001.2841796875,
+              "reached": 0.6484375
+            }
+          }
+        },
+        {
+          "run": 1,
+          "read_ms": 56.3842,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 56.8509,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 1075001.0,
+            "end": {
+              "activity": 1075001.2841796875,
+              "reached": 0.6484375
+            }
+          }
+        },
+        {
+          "run": 2,
+          "read_ms": 54.1305,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 54.514199999999995,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 1075001.0,
+            "end": {
+              "activity": 1075001.2841796875,
+              "reached": 0.6484375
+            }
+          }
+        },
+        {
+          "run": 3,
+          "read_ms": 52.264900000000004,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 52.724,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 1075001.0,
+            "end": {
+              "activity": 1075001.2841796875,
+              "reached": 0.6484375
+            }
+          }
+        },
+        {
+          "run": 4,
+          "read_ms": 50.4842,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 50.94,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 1075001.0,
+            "end": {
+              "activity": 1075001.2841796875,
+              "reached": 0.6484375
+            }
+          }
+        }
+      ]
+    },
+    {
+      "frame": "initial-ko-1080p.png",
+      "rep": 1,
+      "variant": "after",
+      "runs": [
+        {
+          "run": 0,
+          "read_ms": 1060.6293,
+          "advice_ms": 290,
+          "cached": false,
+          "total_ms": 1351.5126,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 1075001.0,
+            "end": {
+              "activity": 1075001.2841796875,
+              "reached": 0.6484375
+            }
+          }
+        },
+        {
+          "run": 1,
+          "read_ms": 54.0056,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 54.5003,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 1075001.0,
+            "end": {
+              "activity": 1075001.2841796875,
+              "reached": 0.6484375
+            }
+          }
+        },
+        {
+          "run": 2,
+          "read_ms": 52.9264,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 53.5852,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 1075001.0,
+            "end": {
+              "activity": 1075001.2841796875,
+              "reached": 0.6484375
+            }
+          }
+        },
+        {
+          "run": 3,
+          "read_ms": 54.398500000000006,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 54.8305,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 1075001.0,
+            "end": {
+              "activity": 1075001.2841796875,
+              "reached": 0.6484375
+            }
+          }
+        },
+        {
+          "run": 4,
+          "read_ms": 50.946600000000004,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 51.4123,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 1075001.0,
+            "end": {
+              "activity": 1075001.2841796875,
+              "reached": 0.6484375
+            }
+          }
+        }
+      ]
+    },
+    {
+      "frame": "initial-ko-1080p.png",
+      "rep": 1,
+      "variant": "before",
+      "runs": [
+        {
+          "run": 0,
+          "read_ms": 1071.3917,
+          "advice_ms": 326,
+          "cached": false,
+          "total_ms": 1398.3842,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 770212.0,
+            "end": {
+              "activity": 770211.671875,
+              "reached": 0.6416015625
+            }
+          }
+        },
+        {
+          "run": 1,
+          "read_ms": 58.5715,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 59.1582,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 770212.0,
+            "end": {
+              "activity": 770211.671875,
+              "reached": 0.6416015625
+            }
+          }
+        },
+        {
+          "run": 2,
+          "read_ms": 56.9041,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 57.3523,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 770212.0,
+            "end": {
+              "activity": 770211.671875,
+              "reached": 0.6416015625
+            }
+          }
+        },
+        {
+          "run": 3,
+          "read_ms": 52.5714,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 53.1055,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 770212.0,
+            "end": {
+              "activity": 770211.671875,
+              "reached": 0.6416015625
+            }
+          }
+        },
+        {
+          "run": 4,
+          "read_ms": 51.3421,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 51.733599999999996,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 770212.0,
+            "end": {
+              "activity": 770211.671875,
+              "reached": 0.6416015625
+            }
+          }
+        }
+      ]
+    },
+    {
+      "frame": "initial-ko-1080p.png",
+      "rep": 2,
+      "variant": "before",
+      "runs": [
+        {
+          "run": 0,
+          "read_ms": 1027.9687,
+          "advice_ms": 338,
+          "cached": false,
+          "total_ms": 1367.057,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 770212.0,
+            "end": {
+              "activity": 770211.671875,
+              "reached": 0.6416015625
+            }
+          }
+        },
+        {
+          "run": 1,
+          "read_ms": 57.3646,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 57.9073,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 770212.0,
+            "end": {
+              "activity": 770211.671875,
+              "reached": 0.6416015625
+            }
+          }
+        },
+        {
+          "run": 2,
+          "read_ms": 53.206900000000005,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 53.6836,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 770212.0,
+            "end": {
+              "activity": 770211.671875,
+              "reached": 0.6416015625
+            }
+          }
+        },
+        {
+          "run": 3,
+          "read_ms": 50.8328,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 51.3228,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 770212.0,
+            "end": {
+              "activity": 770211.671875,
+              "reached": 0.6416015625
+            }
+          }
+        },
+        {
+          "run": 4,
+          "read_ms": 48.9228,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 49.283300000000004,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 770212.0,
+            "end": {
+              "activity": 770211.671875,
+              "reached": 0.6416015625
+            }
+          }
+        }
+      ]
+    },
+    {
+      "frame": "initial-ko-1080p.png",
+      "rep": 2,
+      "variant": "after",
+      "runs": [
+        {
+          "run": 0,
+          "read_ms": 1090.7547,
+          "advice_ms": 328,
+          "cached": false,
+          "total_ms": 1420.0884999999998,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 1075001.0,
+            "end": {
+              "activity": 1075001.2841796875,
+              "reached": 0.6484375
+            }
+          }
+        },
+        {
+          "run": 1,
+          "read_ms": 57.9188,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 58.4402,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 1075001.0,
+            "end": {
+              "activity": 1075001.2841796875,
+              "reached": 0.6484375
+            }
+          }
+        },
+        {
+          "run": 2,
+          "read_ms": 53.586,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 54.015100000000004,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 1075001.0,
+            "end": {
+              "activity": 1075001.2841796875,
+              "reached": 0.6484375
+            }
+          }
+        },
+        {
+          "run": 3,
+          "read_ms": 49.999700000000004,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 50.5196,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 1075001.0,
+            "end": {
+              "activity": 1075001.2841796875,
+              "reached": 0.6484375
+            }
+          }
+        },
+        {
+          "run": 4,
+          "read_ms": 49.158300000000004,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 49.572900000000004,
+          "best": {
+            "index": 2,
+            "targets": [],
+            "value": 1075001.0,
+            "end": {
+              "activity": 1075001.2841796875,
+              "reached": 0.6484375
+            }
+          }
+        }
+      ]
+    },
+    {
+      "frame": "potion-round4-ko-1080p.png",
+      "rep": 0,
+      "variant": "before",
+      "runs": [
+        {
+          "run": 0,
+          "read_ms": 1270.7019,
+          "advice_ms": 208,
+          "cached": false,
+          "total_ms": 1480.4757,
+          "best": {
+            "index": 2,
+            "targets": [
+              2
+            ],
+            "value": 818474.0,
+            "end": {
+              "activity": 818474.224609375,
+              "reached": 0.8203125
+            }
+          }
+        },
+        {
+          "run": 1,
+          "read_ms": 123.9551,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 124.4323,
+          "best": {
+            "index": 2,
+            "targets": [
+              2
+            ],
+            "value": 818474.0,
+            "end": {
+              "activity": 818474.224609375,
+              "reached": 0.8203125
+            }
+          }
+        },
+        {
+          "run": 2,
+          "read_ms": 111.96979999999999,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 112.41619999999999,
+          "best": {
+            "index": 2,
+            "targets": [
+              2
+            ],
+            "value": 818474.0,
+            "end": {
+              "activity": 818474.224609375,
+              "reached": 0.8203125
+            }
+          }
+        },
+        {
+          "run": 3,
+          "read_ms": 110.8432,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 111.2497,
+          "best": {
+            "index": 2,
+            "targets": [
+              2
+            ],
+            "value": 818474.0,
+            "end": {
+              "activity": 818474.224609375,
+              "reached": 0.8203125
+            }
+          }
+        },
+        {
+          "run": 4,
+          "read_ms": 113.9021,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 114.4563,
+          "best": {
+            "index": 2,
+            "targets": [
+              2
+            ],
+            "value": 818474.0,
+            "end": {
+              "activity": 818474.224609375,
+              "reached": 0.8203125
+            }
+          }
+        }
+      ]
+    },
+    {
+      "frame": "potion-round4-ko-1080p.png",
+      "rep": 0,
+      "variant": "after",
+      "runs": [
+        {
+          "run": 0,
+          "read_ms": 1266.7875,
+          "advice_ms": 172,
+          "cached": false,
+          "total_ms": 1440.8210000000001,
+          "best": "refresh"
+        },
+        {
+          "run": 1,
+          "read_ms": 117.2801,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 117.7967,
+          "best": "refresh"
+        },
+        {
+          "run": 2,
+          "read_ms": 114.1861,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 114.6607,
+          "best": "refresh"
+        },
+        {
+          "run": 3,
+          "read_ms": 110.22840000000001,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 110.6049,
+          "best": "refresh"
+        },
+        {
+          "run": 4,
+          "read_ms": 107.40280000000001,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 107.7483,
+          "best": "refresh"
+        }
+      ]
+    },
+    {
+      "frame": "potion-round4-ko-1080p.png",
+      "rep": 1,
+      "variant": "after",
+      "runs": [
+        {
+          "run": 0,
+          "read_ms": 1266.2004,
+          "advice_ms": 184,
+          "cached": false,
+          "total_ms": 1451.0851,
+          "best": "refresh"
+        },
+        {
+          "run": 1,
+          "read_ms": 122.66760000000001,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 123.0423,
+          "best": "refresh"
+        },
+        {
+          "run": 2,
+          "read_ms": 117.6427,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 118.3129,
+          "best": "refresh"
+        },
+        {
+          "run": 3,
+          "read_ms": 107.4238,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 107.913,
+          "best": "refresh"
+        },
+        {
+          "run": 4,
+          "read_ms": 108.5026,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 108.9239,
+          "best": "refresh"
+        }
+      ]
+    },
+    {
+      "frame": "potion-round4-ko-1080p.png",
+      "rep": 1,
+      "variant": "before",
+      "runs": [
+        {
+          "run": 0,
+          "read_ms": 1243.2305999999999,
+          "advice_ms": 206,
+          "cached": false,
+          "total_ms": 1450.5366,
+          "best": {
+            "index": 2,
+            "targets": [
+              2
+            ],
+            "value": 818474.0,
+            "end": {
+              "activity": 818474.224609375,
+              "reached": 0.8203125
+            }
+          }
+        },
+        {
+          "run": 1,
+          "read_ms": 119.2213,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 119.6997,
+          "best": {
+            "index": 2,
+            "targets": [
+              2
+            ],
+            "value": 818474.0,
+            "end": {
+              "activity": 818474.224609375,
+              "reached": 0.8203125
+            }
+          }
+        },
+        {
+          "run": 2,
+          "read_ms": 115.7146,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 116.1354,
+          "best": {
+            "index": 2,
+            "targets": [
+              2
+            ],
+            "value": 818474.0,
+            "end": {
+              "activity": 818474.224609375,
+              "reached": 0.8203125
+            }
+          }
+        },
+        {
+          "run": 3,
+          "read_ms": 107.6357,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 108.0364,
+          "best": {
+            "index": 2,
+            "targets": [
+              2
+            ],
+            "value": 818474.0,
+            "end": {
+              "activity": 818474.224609375,
+              "reached": 0.8203125
+            }
+          }
+        },
+        {
+          "run": 4,
+          "read_ms": 104.1909,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 104.5624,
+          "best": {
+            "index": 2,
+            "targets": [
+              2
+            ],
+            "value": 818474.0,
+            "end": {
+              "activity": 818474.224609375,
+              "reached": 0.8203125
+            }
+          }
+        }
+      ]
+    },
+    {
+      "frame": "potion-round4-ko-1080p.png",
+      "rep": 2,
+      "variant": "before",
+      "runs": [
+        {
+          "run": 0,
+          "read_ms": 1301.0972000000002,
+          "advice_ms": 210,
+          "cached": false,
+          "total_ms": 1512.1359,
+          "best": {
+            "index": 2,
+            "targets": [
+              2
+            ],
+            "value": 818474.0,
+            "end": {
+              "activity": 818474.224609375,
+              "reached": 0.8203125
+            }
+          }
+        },
+        {
+          "run": 1,
+          "read_ms": 123.2819,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 123.7894,
+          "best": {
+            "index": 2,
+            "targets": [
+              2
+            ],
+            "value": 818474.0,
+            "end": {
+              "activity": 818474.224609375,
+              "reached": 0.8203125
+            }
+          }
+        },
+        {
+          "run": 2,
+          "read_ms": 115.35979999999999,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 115.756,
+          "best": {
+            "index": 2,
+            "targets": [
+              2
+            ],
+            "value": 818474.0,
+            "end": {
+              "activity": 818474.224609375,
+              "reached": 0.8203125
+            }
+          }
+        },
+        {
+          "run": 3,
+          "read_ms": 107.0553,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 107.5313,
+          "best": {
+            "index": 2,
+            "targets": [
+              2
+            ],
+            "value": 818474.0,
+            "end": {
+              "activity": 818474.224609375,
+              "reached": 0.8203125
+            }
+          }
+        },
+        {
+          "run": 4,
+          "read_ms": 107.6264,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 107.9956,
+          "best": {
+            "index": 2,
+            "targets": [
+              2
+            ],
+            "value": 818474.0,
+            "end": {
+              "activity": 818474.224609375,
+              "reached": 0.8203125
+            }
+          }
+        }
+      ]
+    },
+    {
+      "frame": "potion-round4-ko-1080p.png",
+      "rep": 2,
+      "variant": "after",
+      "runs": [
+        {
+          "run": 0,
+          "read_ms": 1230.5676,
+          "advice_ms": 171,
+          "cached": false,
+          "total_ms": 1403.0194000000001,
+          "best": "refresh"
+        },
+        {
+          "run": 1,
+          "read_ms": 118.18140000000001,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 118.6492,
+          "best": "refresh"
+        },
+        {
+          "run": 2,
+          "read_ms": 114.9778,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 115.3715,
+          "best": "refresh"
+        },
+        {
+          "run": 3,
+          "read_ms": 111.39580000000001,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 111.8623,
+          "best": "refresh"
+        },
+        {
+          "run": 4,
+          "read_ms": 109.2413,
+          "advice_ms": 0,
+          "cached": true,
+          "total_ms": 109.7364,
+          "best": "refresh"
+        }
+      ]
+    }
+  ]
+}

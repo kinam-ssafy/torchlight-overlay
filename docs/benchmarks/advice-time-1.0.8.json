@@ -1,0 +1,613 @@
+{
+  "futures": 1024,
+  "threads": 8,
+  "cases": 8,
+  "measuredRepetitions": 5,
+  "rows": [
+    {
+      "case": 0,
+      "variant": "target",
+      "ms": 106
+    },
+    {
+      "case": 0,
+      "variant": "mean",
+      "ms": 127
+    },
+    {
+      "case": 0,
+      "variant": "baseline",
+      "ms": 129
+    },
+    {
+      "case": 0,
+      "variant": "mean",
+      "ms": 112
+    },
+    {
+      "case": 0,
+      "variant": "baseline",
+      "ms": 111
+    },
+    {
+      "case": 0,
+      "variant": "target",
+      "ms": 111
+    },
+    {
+      "case": 0,
+      "variant": "baseline",
+      "ms": 112
+    },
+    {
+      "case": 0,
+      "variant": "target",
+      "ms": 110
+    },
+    {
+      "case": 0,
+      "variant": "mean",
+      "ms": 102
+    },
+    {
+      "case": 0,
+      "variant": "target",
+      "ms": 94
+    },
+    {
+      "case": 0,
+      "variant": "mean",
+      "ms": 92
+    },
+    {
+      "case": 0,
+      "variant": "baseline",
+      "ms": 116
+    },
+    {
+      "case": 0,
+      "variant": "mean",
+      "ms": 116
+    },
+    {
+      "case": 0,
+      "variant": "baseline",
+      "ms": 126
+    },
+    {
+      "case": 0,
+      "variant": "target",
+      "ms": 141
+    },
+    {
+      "case": 1,
+      "variant": "target",
+      "ms": 18
+    },
+    {
+      "case": 1,
+      "variant": "mean",
+      "ms": 18
+    },
+    {
+      "case": 1,
+      "variant": "baseline",
+      "ms": 21
+    },
+    {
+      "case": 1,
+      "variant": "mean",
+      "ms": 21
+    },
+    {
+      "case": 1,
+      "variant": "baseline",
+      "ms": 22
+    },
+    {
+      "case": 1,
+      "variant": "target",
+      "ms": 19
+    },
+    {
+      "case": 1,
+      "variant": "baseline",
+      "ms": 21
+    },
+    {
+      "case": 1,
+      "variant": "target",
+      "ms": 18
+    },
+    {
+      "case": 1,
+      "variant": "mean",
+      "ms": 19
+    },
+    {
+      "case": 1,
+      "variant": "target",
+      "ms": 21
+    },
+    {
+      "case": 1,
+      "variant": "mean",
+      "ms": 20
+    },
+    {
+      "case": 1,
+      "variant": "baseline",
+      "ms": 22
+    },
+    {
+      "case": 1,
+      "variant": "mean",
+      "ms": 21
+    },
+    {
+      "case": 1,
+      "variant": "baseline",
+      "ms": 19
+    },
+    {
+      "case": 1,
+      "variant": "target",
+      "ms": 17
+    },
+    {
+      "case": 2,
+      "variant": "target",
+      "ms": 1
+    },
+    {
+      "case": 2,
+      "variant": "mean",
+      "ms": 1
+    },
+    {
+      "case": 2,
+      "variant": "baseline",
+      "ms": 1
+    },
+    {
+      "case": 2,
+      "variant": "mean",
+      "ms": 1
+    },
+    {
+      "case": 2,
+      "variant": "baseline",
+      "ms": 1
+    },
+    {
+      "case": 2,
+      "variant": "target",
+      "ms": 1
+    },
+    {
+      "case": 2,
+      "variant": "baseline",
+      "ms": 1
+    },
+    {
+      "case": 2,
+      "variant": "target",
+      "ms": 1
+    },
+    {
+      "case": 2,
+      "variant": "mean",
+      "ms": 1
+    },
+    {
+      "case": 2,
+      "variant": "target",
+      "ms": 1
+    },
+    {
+      "case": 2,
+      "variant": "mean",
+      "ms": 2
+    },
+    {
+      "case": 2,
+      "variant": "baseline",
+      "ms": 1
+    },
+    {
+      "case": 2,
+      "variant": "mean",
+      "ms": 1
+    },
+    {
+      "case": 2,
+      "variant": "baseline",
+      "ms": 1
+    },
+    {
+      "case": 2,
+      "variant": "target",
+      "ms": 1
+    },
+    {
+      "case": 3,
+      "variant": "target",
+      "ms": 143
+    },
+    {
+      "case": 3,
+      "variant": "mean",
+      "ms": 131
+    },
+    {
+      "case": 3,
+      "variant": "baseline",
+      "ms": 144
+    },
+    {
+      "case": 3,
+      "variant": "mean",
+      "ms": 137
+    },
+    {
+      "case": 3,
+      "variant": "baseline",
+      "ms": 142
+    },
+    {
+      "case": 3,
+      "variant": "target",
+      "ms": 128
+    },
+    {
+      "case": 3,
+      "variant": "baseline",
+      "ms": 141
+    },
+    {
+      "case": 3,
+      "variant": "target",
+      "ms": 133
+    },
+    {
+      "case": 3,
+      "variant": "mean",
+      "ms": 128
+    },
+    {
+      "case": 3,
+      "variant": "target",
+      "ms": 127
+    },
+    {
+      "case": 3,
+      "variant": "mean",
+      "ms": 132
+    },
+    {
+      "case": 3,
+      "variant": "baseline",
+      "ms": 142
+    },
+    {
+      "case": 3,
+      "variant": "mean",
+      "ms": 136
+    },
+    {
+      "case": 3,
+      "variant": "baseline",
+      "ms": 138
+    },
+    {
+      "case": 3,
+      "variant": "target",
+      "ms": 131
+    },
+    {
+      "case": 4,
+      "variant": "target",
+      "ms": 265
+    },
+    {
+      "case": 4,
+      "variant": "mean",
+      "ms": 255
+    },
+    {
+      "case": 4,
+      "variant": "baseline",
+      "ms": 275
+    },
+    {
+      "case": 4,
+      "variant": "mean",
+      "ms": 259
+    },
+    {
+      "case": 4,
+      "variant": "baseline",
+      "ms": 279
+    },
+    {
+      "case": 4,
+      "variant": "target",
+      "ms": 278
+    },
+    {
+      "case": 4,
+      "variant": "baseline",
+      "ms": 296
+    },
+    {
+      "case": 4,
+      "variant": "target",
+      "ms": 266
+    },
+    {
+      "case": 4,
+      "variant": "mean",
+      "ms": 262
+    },
+    {
+      "case": 4,
+      "variant": "target",
+      "ms": 264
+    },
+    {
+      "case": 4,
+      "variant": "mean",
+      "ms": 251
+    },
+    {
+      "case": 4,
+      "variant": "baseline",
+      "ms": 275
+    },
+    {
+      "case": 4,
+      "variant": "mean",
+      "ms": 261
+    },
+    {
+      "case": 4,
+      "variant": "baseline",
+      "ms": 281
+    },
+    {
+      "case": 4,
+      "variant": "target",
+      "ms": 258
+    },
+    {
+      "case": 5,
+      "variant": "target",
+      "ms": 12
+    },
+    {
+      "case": 5,
+      "variant": "mean",
+      "ms": 12
+    },
+    {
+      "case": 5,
+      "variant": "baseline",
+      "ms": 13
+    },
+    {
+      "case": 5,
+      "variant": "mean",
+      "ms": 11
+    },
+    {
+      "case": 5,
+      "variant": "baseline",
+      "ms": 11
+    },
+    {
+      "case": 5,
+      "variant": "target",
+      "ms": 12
+    },
+    {
+      "case": 5,
+      "variant": "baseline",
+      "ms": 12
+    },
+    {
+      "case": 5,
+      "variant": "target",
+      "ms": 11
+    },
+    {
+      "case": 5,
+      "variant": "mean",
+      "ms": 11
+    },
+    {
+      "case": 5,
+      "variant": "target",
+      "ms": 12
+    },
+    {
+      "case": 5,
+      "variant": "mean",
+      "ms": 12
+    },
+    {
+      "case": 5,
+      "variant": "baseline",
+      "ms": 12
+    },
+    {
+      "case": 5,
+      "variant": "mean",
+      "ms": 12
+    },
+    {
+      "case": 5,
+      "variant": "baseline",
+      "ms": 13
+    },
+    {
+      "case": 5,
+      "variant": "target",
+      "ms": 11
+    },
+    {
+      "case": 6,
+      "variant": "target",
+      "ms": 290
+    },
+    {
+      "case": 6,
+      "variant": "mean",
+      "ms": 269
+    },
+    {
+      "case": 6,
+      "variant": "baseline",
+      "ms": 295
+    },
+    {
+      "case": 6,
+      "variant": "mean",
+      "ms": 274
+    },
+    {
+      "case": 6,
+      "variant": "baseline",
+      "ms": 302
+    },
+    {
+      "case": 6,
+      "variant": "target",
+      "ms": 288
+    },
+    {
+      "case": 6,
+      "variant": "baseline",
+      "ms": 304
+    },
+    {
+      "case": 6,
+      "variant": "target",
+      "ms": 297
+    },
+    {
+      "case": 6,
+      "variant": "mean",
+      "ms": 280
+    },
+    {
+      "case": 6,
+      "variant": "target",
+      "ms": 302
+    },
+    {
+      "case": 6,
+      "variant": "mean",
+      "ms": 298
+    },
+    {
+      "case": 6,
+      "variant": "baseline",
+      "ms": 310
+    },
+    {
+      "case": 6,
+      "variant": "mean",
+      "ms": 281
+    },
+    {
+      "case": 6,
+      "variant": "baseline",
+      "ms": 299
+    },
+    {
+      "case": 6,
+      "variant": "target",
+      "ms": 288
+    },
+    {
+      "case": 7,
+      "variant": "target",
+      "ms": 239
+    },
+    {
+      "case": 7,
+      "variant": "mean",
+      "ms": 284
+    },
+    {
+      "case": 7,
+      "variant": "baseline",
+      "ms": 233
+    },
+    {
+      "case": 7,
+      "variant": "mean",
+      "ms": 213
+    },
+    {
+      "case": 7,
+      "variant": "baseline",
+      "ms": 254
+    },
+    {
+      "case": 7,
+      "variant": "target",
+      "ms": 256
+    },
+    {
+      "case": 7,
+      "variant": "baseline",
+      "ms": 249
+    },
+    {
+      "case": 7,
+      "variant": "target",
+      "ms": 226
+    },
+    {
+      "case": 7,
+      "variant": "mean",
+      "ms": 247
+    },
+    {
+      "case": 7,
+      "variant": "target",
+      "ms": 312
+    },
+    {
+      "case": 7,
+      "variant": "mean",
+      "ms": 326
+    },
+    {
+      "case": 7,
+      "variant": "baseline",
+      "ms": 332
+    },
+    {
+      "case": 7,
+      "variant": "mean",
+      "ms": 261
+    },
+    {
+      "case": 7,
+      "variant": "baseline",
+      "ms": 248
+    },
+    {
+      "case": 7,
+      "variant": "target",
+      "ms": 231
+    }
+  ],
+  "sumOfCaseMediansMs": {
+    "baseline": 1122,
+    "target": 1066,
+    "mean": 1077
+  }
+}

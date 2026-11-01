@@ -48,8 +48,12 @@ impl Plan {
     }
 }
 
-fn pct(x: f64) -> String {
-    format!("84만 달성 예상 {:.0}% / 시뮬레이션", x * 100.0)
+fn estimate(e: vorax::advisor::End, goal: vorax::bot::Goal) -> String {
+    if goal == vorax::bot::Goal::Mean {
+        format!("평균 최종 활성 예상 {:.1}만 / 시뮬레이션", e.activity / 10_000.0)
+    } else {
+        format!("84만 달성 예상 {:.0}% / 시뮬레이션", e.reached * 100.0)
+    }
 }
 
 /// The hand positions the reading's names came from: unknown cards are left out of its hand.
@@ -76,7 +80,7 @@ pub fn plan_for(advice: &Advice, screen: &ScreenState, reading: &Reading, l: &La
         Best::Refresh => {
             let r = l.refresh;
             plan.button = Some(Rect::new(r.x - 0.35 * r.w, r.y - 0.45 * r.h, r.w * 1.7, r.h * 1.9));
-            let sub = advice.refresh_end.map(|e| pct(e.reached)).unwrap_or_default();
+            let sub = advice.refresh_end.map(|e| estimate(e, advice.goal)).unwrap_or_default();
             plan.pill = Some(Pill { main: "새로고침".into(), sub, dim: false });
         }
         Best::Card(r) => {
@@ -94,8 +98,8 @@ pub fn plan_for(advice: &Advice, screen: &ScreenState, reading: &Reading, l: &La
                 ts => format!("{name}  /  탱크 {}", ts.iter().map(|t| (t + 1).to_string()).collect::<Vec<_>>().join(" + ")),
             };
             let sub = match (&advice.note, r.end) {
-                (Some(_), _) => "특수 포션 우선 규칙 / 확률 계산 대상 외".into(),
-                (None, Some(e)) => pct(e.reached),
+                (Some(_), _) => "특수 포션 우선 규칙 / 평균 계산 대상 외".into(),
+                (None, Some(e)) => estimate(e, advice.goal),
                 (None, None) => String::new(),
             };
             plan.pill = Some(Pill { main, sub, dim: false });
