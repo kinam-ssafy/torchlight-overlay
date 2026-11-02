@@ -137,9 +137,18 @@ fn gather(from: u32, to: u32, eps: f64, smart: bool, what: &str) -> Vec<Sums> {
     sums
 }
 
-/// Every board of games `from..to` as raw numbers for decision trees (tree_features, then how its game ended), as
-/// little-endian float32 rows in `path`, and `path`.json saying how many columns and rows.
-pub fn rows(from: u32, to: u32, eps: f64, smart: bool, path: &str) {
+fn linear_features(s: &GameState) -> Vec<f64> {
+    let mut sparse = Vec::new();
+    features(data(), s, &mut sparse);
+    let mut dense = vec![0.0; feature_count(data())];
+    for (i, value) in sparse {
+        dense[i as usize] = value;
+    }
+    dense
+}
+
+/// Float32 training rows: tree features + target, or round + linear features + target.
+pub fn rows(from: u32, to: u32, eps: f64, smart: bool, path: &str, linear: bool) {
     use std::io::Write;
     let d = data();
     let file = std::fs::File::create(path).unwrap_or_else(|e| crate::fail(&format!("{path}: {e}")));
@@ -147,15 +156,20 @@ pub fn rows(from: u32, to: u32, eps: f64, smart: bool, path: &str) {
     let t = Instant::now();
     let (mut n, mut columns) = (0u64, 0usize);
     let mut at = from;
+    // Dense linear rows are much wider; keep the temporary game batch bounded.
+    let batch = if linear { 256 } else { BATCH };
     while at < to {
-        let end = (at + BATCH).min(to);
+        let end = (at + batch).min(to);
         let chunks: Vec<Vec<u8>> = (at..end)
             .into_par_iter()
             .map(|seed| {
                 let g = play(seed, eps, smart);
                 let mut bytes = Vec::new();
                 for b in &g.boards {
-                    for v in tree_features(d, b).into_iter().chain([g.y]) {
+                    let x = if linear {
+                        std::iter::once(b.round as f64).chain(linear_features(b)).collect()
+                    } else { tree_features(d, b) };
+                    for v in x.into_iter().chain([g.y]) {
                         bytes.extend_from_slice(&(v as f32).to_le_bytes());
                     }
                 }
@@ -163,7 +177,8 @@ pub fn rows(from: u32, to: u32, eps: f64, smart: bool, path: &str) {
             })
             .collect();
         if columns == 0 {
-            columns = tree_features(d, &create_game(d.default_settings, None, Some(1))).len() + 1;
+            columns = if linear { feature_count(d) + 2 }
+                else { tree_features(d, &create_game(d.default_settings, None, Some(1))).len() + 1 };
         }
         for c in &chunks {
             out.write_all(c).unwrap_or_else(|e| crate::fail(&format!("{path}: {e}")));
@@ -177,22 +192,24 @@ pub fn rows(from: u32, to: u32, eps: f64, smart: bool, path: &str) {
     out.flush().unwrap_or_else(|e| crate::fail(&format!("{path}: {e}")));
     let meta = serde_json::json!({ "columns": columns, "rows": n, "games": to - from, "seed0": from, "eps": eps,
         "dtype": "float32-le", "target": TARGET, "potionRefreshes": d.default_settings.potion_refreshes,
-        "instrumentRefreshes": d.default_settings.instrument_refreshes });
+        "instrumentRefreshes": d.default_settings.instrument_refreshes,
+        "features": if linear { "linear-rounds" } else { "tree" } });
     std::fs::write(format!("{path}.json"), meta.to_string()).unwrap_or_else(|e| crate::fail(&format!("{path}.json: {e}")));
     println!("wrote {path}: {n} boards of {} games, {columns} columns", to - from);
 }
 
 /// Full-precision features and the production CPU prediction for checking an exported GPU model.
 /// The fixed random trajectory is independent of the model being checked.
-pub fn probe(seed0: u32, games: u32, path: &str) {
+pub fn probe(seed0: u32, games: u32, path: &str, linear: bool) {
     use std::io::Write;
     let file = std::fs::File::create(path).unwrap_or_else(|e| crate::fail(&format!("{path}: {e}")));
     let mut out = std::io::BufWriter::new(file);
     for seed in seed0..seed0.checked_add(games).unwrap_or_else(|| crate::fail("probe seed range overflow")) {
         let g = play(seed, 1.0, false);
         for s in g.boards.iter().filter(|s| s.phase != Phase::GameOver) {
-            let row = serde_json::json!({ "seed": seed, "features": tree_features(data(), s),
+            let mut row = serde_json::json!({ "seed": seed, "features": if linear { linear_features(s) } else { tree_features(data(), s) },
                 "prediction": vorax::value::board_value(s) });
+            if linear { row["round"] = serde_json::json!(s.round); }
             writeln!(out, "{row}").unwrap_or_else(|e| crate::fail(&format!("{path}: {e}")));
         }
     }

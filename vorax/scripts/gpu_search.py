@@ -183,9 +183,18 @@ def paired(champion, candidate):
 
 
 def eligible_for_review(baseline, candidate, release_quality):
-    return (release_quality and candidate['engine_gate_pass'] and candidate['paired_p'] < .05
+    return (release_quality and candidate['engine_gate_pass'] and candidate.get('adjusted_p', candidate['paired_p']) < .05
             and candidate['p10'] >= baseline['p10'] and candidate['below300k'] <= baseline['below300k']
             and candidate['seconds'] <= baseline['seconds'] * 1.25)
+
+
+def select_candidate(results):
+    candidates = results[1:]
+    timely = [r for r in candidates if r['seconds'] <= results[0]['seconds'] * 1.25]
+    qualified = [r for r in candidates if r.get('eligible')]
+    winner = max(qualified or timely or candidates,
+                 key=lambda r: (r['rate840k'], r['capped_mean'], r['p10'], -r['monsters']))
+    return winner, bool(timely)
 
 
 def evaluate(args, holdout=False):
@@ -194,7 +203,8 @@ def evaluate(args, holdout=False):
         raise ValueError('engine/champion changed since fit; use a fresh run')
     if (args.potion_refreshes, args.instrument_refreshes) != (manifest['potion_refreshes'], manifest['instrument_refreshes']):
         raise ValueError('evaluation rerolls must match training')
-    if len(manifest['candidates']) != len(CANDIDATES[manifest.get('profile', 'full')]):
+    expected = manifest['candidate_count'] if 'candidate_count' in manifest else len(CANDIDATES[manifest.get('profile', 'full')])
+    if len(manifest['candidates']) != expected:
         raise ValueError('fit did not finish all candidates')
     for candidate in manifest['candidates']:
         if sha(args.run / (candidate['name'] + '.json')) != candidate['sha256']:
@@ -207,15 +217,19 @@ def evaluate(args, holdout=False):
     if holdout:
         screening = json.loads((args.run / 'screen.json').read_text())
         assert_separate({'seed0': seed, 'games': args.eval_games}, screening)
-        names = [screening['winner']]
+        names = args.finalists.split(',') if args.finalists else [screening['winner']]
+        known = {c['name'] for c in manifest['candidates']}
+        if len(names) != len(set(names)) or not set(names) <= known:
+            raise ValueError('finalists must be distinct fitted candidates')
     else:
         names = [c['name'] for c in manifest['candidates']]
     report = {'phase': phase, 'policy': 'solver', 'futures': args.futures,
               'seed0': seed, 'games': args.eval_games, 'results': [], 'promoted': False,
-              'release_quality': holdout and args.eval_games >= 512 and args.futures >= 256}
+              'release_quality': holdout and args.eval_games >= 512 and args.futures >= 256,
+              'finalists': names, 'comparison_count': len(names)}
     base = None
     for name in ['champion', *names]:
-        model = [] if name == 'champion' else ['--model', args.run / (name + '.json')]
+        model = ['--model', ROOT / 'data/boardValue.json' if name == 'champion' else args.run / (name + '.json')]
         path = args.run / f'{phase}-{name}.json'
         scorefile = args.run / f'{phase}-{name}.txt'
         elapsed = command(args, f'{phase}-{name}', 'sim', '--policy', 'solver', '--goal', 'target',
@@ -229,6 +243,7 @@ def evaluate(args, holdout=False):
             base = rows
         else:
             result.update(paired(base, rows))
+            result['adjusted_p'] = min(1.0, result['paired_p'] * len(names))
             command(args, f'{phase}-{name}-gate', 'gate', args.run / f'{phase}-champion.txt', scorefile)
             gate = (args.run / f'{phase}-{name}-gate.log').read_text(encoding='utf-8')
             result['engine_gate_pass'] = 'pass=yes' in gate
@@ -238,11 +253,9 @@ def evaluate(args, holdout=False):
         report['results'].append(result)
         write_json(args.run / (phase + '.json'), report)
         plot_scores(args.run, report)
-    candidates = report['results'][1:]
-    timely = [r for r in candidates if r['seconds'] <= report['results'][0]['seconds'] * 1.25]
-    winner = max(timely or candidates, key=lambda r: (r['rate840k'], r['capped_mean'], r['p10'], -r['monsters']))
+    winner, timely = select_candidate(report['results'])
     report['winner'] = winner['name']
-    report['within_cpu_budget'] = bool(timely)
+    report['within_cpu_budget'] = timely
     report['decision'] = ('eligible_for_review' if winner['eligible'] else 'keep_champion') if holdout else 'screening_only'
     write_json(args.run / (phase + '.json'), report)
     print(json.dumps({'phase': phase, 'winner': winner['name'], 'decision': report['decision']}), flush=True)
@@ -318,9 +331,12 @@ def main():
     p.add_argument('--eval-games', type=int, default=128)
     p.add_argument('--futures', type=int, default=64)
     p.add_argument('--profile', choices=CANDIDATES, default='compact')
+    p.add_argument('--finalists', help='preselected comma-separated candidate names for holdout; Bonferroni adjusted')
     p.add_argument('--potion-refreshes', type=int, default=3)
     p.add_argument('--instrument-refreshes', type=int, default=1)
     args = p.parse_args()
+    if args.finalists and args.stage != 'holdout':
+        p.error('--finalists is only supported for holdout')
     if min(args.threads, args.games, args.valid_games, args.eval_games, args.futures) <= 0:
         p.error('counts must be positive')
     if not (0 <= args.potion_refreshes <= 9 and 0 <= args.instrument_refreshes <= 9):

@@ -1,0 +1,3 @@
+# Development only; CUDA 13 toolkit and driver required on the training machine.
+-r requirements-gpu.txt
+cupy-cuda13x==14.2.0

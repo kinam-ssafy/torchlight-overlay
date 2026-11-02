@@ -1,5 +1,6 @@
 """CPU-only tests for export boundaries and data/evaluation isolation."""
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -7,7 +8,45 @@ import unittest
 import numpy as np
 import xgboost as xgb
 from gpu_model import export_model, predict_export, split_boundary
-from gpu_search import assert_separate, eligible_for_review, load_rows, paired
+from gpu_search import assert_separate, eligible_for_review, load_rows, paired, select_candidate
+from gpu_finetune import correction, predict_linear
+
+
+class FineTuneTests(unittest.TestCase):
+    @unittest.skipUnless(os.environ.get('VORAX_TEST_CUDA') == '1', 'explicit CUDA test')
+    def test_cuda_correction_matches_cpu_reference(self):
+        import cupy as cp
+        rng = np.random.default_rng(31)
+        x = np.c_[np.ones(128), rng.normal(size=(128, 7)), np.zeros(128)]
+        prior = rng.normal(scale=.1, size=9)
+        y = rng.uniform(0, .84, size=128)
+        for low_weight in [1., 2.]:
+            gpu = cp.asnumpy(correction(cp.asarray(x), cp.asarray(y), cp.asarray(prior), low_weight, cp))
+            np.testing.assert_allclose(gpu, correction(x, y, prior, low_weight, np), rtol=1e-10, atol=1e-10)
+
+    def test_exact_prior_needs_no_correction(self):
+        x = np.array([[1., 0., 0.], [1., .5, 0.], [1., 1., 0.]])
+        prior = np.array([.2, .3, 2.])
+        np.testing.assert_array_equal(correction(x, x @ prior, prior, 1., np), np.zeros(3))
+
+    def test_unobserved_feature_keeps_prior(self):
+        x = np.array([[1., 0.], [1., 0.], [1., 0.]])
+        delta = correction(x, np.array([.2, .3, .4]), np.array([.5, 9.]), 1., np)
+        self.assertLess(delta[0], 0)
+        self.assertEqual(delta[1], 0)
+
+    def test_saturated_correct_prediction_is_not_pulled_down(self):
+        x = np.ones((3, 1))
+        np.testing.assert_array_equal(correction(x, np.full(3, .84), np.array([2.]), 1., np), [0.])
+
+    def test_low_score_weight_changes_direction_without_new_features(self):
+        x = np.ones((2, 1))
+        prior, y = np.array([.5]), np.array([.1, .8])
+        self.assertLess(correction(x, y, prior, 2., np)[0], correction(x, y, prior, 1., np)[0])
+
+    def test_prediction_uses_round_and_cpu_cap(self):
+        pred = predict_linear(np.array([[.2, .3], [.8, .2]]), np.array([1, 2]), np.ones((2, 2)))
+        np.testing.assert_array_equal(pred, [500_000, 840_000])
 
 
 class ExportTests(unittest.TestCase):
@@ -43,6 +82,14 @@ class ExportTests(unittest.TestCase):
 
 
 class EvaluationTests(unittest.TestCase):
+    def test_qualified_candidate_beats_higher_rate_with_failed_floor_gate(self):
+        base = {'seconds': 10}
+        bad = {'name': 'bad', 'seconds': 10, 'eligible': False, 'rate840k': .9, 'capped_mean': 700000, 'p10': 200000, 'monsters': 100}
+        good = {**bad, 'name': 'good', 'eligible': True, 'rate840k': .85}
+        winner, timely = select_candidate([base, bad, good])
+        self.assertEqual(winner['name'], 'good')
+        self.assertTrue(timely)
+
     def test_game_seeds_not_random_row_split(self):
         assert_separate({'seed0': 1, 'games': 100}, {'seed0': 101, 'games': 10})
         with self.assertRaises(ValueError):
@@ -73,6 +120,7 @@ class EvaluationTests(unittest.TestCase):
         good = {'engine_gate_pass': True, 'paired_p': .01, 'p10': 510_000, 'below300k': 1, 'seconds': 11}
         self.assertTrue(eligible_for_review(baseline, good, True))
         self.assertFalse(eligible_for_review(baseline, good, False))
+        self.assertFalse(eligible_for_review(baseline, {**good, 'adjusted_p': .1}, True))
         for key, value in [('engine_gate_pass', False), ('paired_p', .1), ('p10', 490_000), ('below300k', 3), ('seconds', 13)]:
             with self.subTest(key=key):
                 self.assertFalse(eligible_for_review(baseline, {**good, key: value}, True))

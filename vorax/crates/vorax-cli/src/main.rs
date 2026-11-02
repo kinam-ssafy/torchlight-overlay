@@ -9,6 +9,7 @@
 //!   vorax train [--games N] [--check M] [--seed0 S] [--eps E] --out model.json   fit a board value on simulated games
 //!   vorax train [--games N] [--seed0 S] [--eps E] --rows boards.bin  the games' boards as raw rows, for decision trees
 //!   vorax train --probe boards.jsonl [--games 48] --model model.json  CPU export verification
+//!   Add --linear to --rows or --probe for the existing per-round linear model's features.
 //!   vorax gate champion.txt challenger.txt                          a new board value against the one in use
 //!   vorax sim --policy solver [--futures N] [--halving] --against champion.txt [--games MAX] [--p1 0.55]
 //!       a sequential test on the champion's seeds: stops as soon as the challenger is clearly better or not
@@ -59,12 +60,13 @@ fn main() {
         "train" => {
             let a = &args[1..];
             let games = arg(a, "--games").unwrap_or(100_000);
+            let linear = a.iter().any(|v| v == "--linear");
             if let Some(path) = arg::<String>(a, "--probe") {
-                return train::probe(arg(a, "--seed0").unwrap_or(90_000_000), arg(a, "--games").unwrap_or(48), &path);
+                return train::probe(arg(a, "--seed0").unwrap_or(90_000_000), arg(a, "--games").unwrap_or(48), &path, linear);
             }
             if let Some(path) = arg::<String>(a, "--rows") {
                 let seed0 = arg(a, "--seed0").unwrap_or(5_000_000);
-                return train::rows(seed0, seed0 + games, arg(a, "--eps").unwrap_or(0.1), vorax::data().model.is_some(), &path);
+                return train::rows(seed0, seed0 + games, arg(a, "--eps").unwrap_or(0.1), vorax::data().model.is_some(), &path, linear);
             }
             let out: String = arg(a, "--out").unwrap_or_else(|| fail("train: --out model.json (or --rows boards.bin)"));
             train::train(games, arg(a, "--check").unwrap_or((games / 10).max(1000)), arg(a, "--seed0").unwrap_or(5_000_000), arg(a, "--eps").unwrap_or(0.1), vorax::data().model.is_some(), &out)
