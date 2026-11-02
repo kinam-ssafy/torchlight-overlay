@@ -186,6 +186,9 @@ of the options round by round) reached 840k in 80.1% of 1,440 games against 81.6
 
 ## Tests
 
+Development-only GPU model fitting, CPU export checks and paired CPU simulation gates are documented in
+[GPU model search](../docs/GPU-MODEL-SEARCH.md). CUDA/XGBoost are not dependencies of the portable overlay.
+
 `cargo test --release --workspace` replays recorded traces, so a change can't make the engine, Solver or reader
 play differently by accident:
 

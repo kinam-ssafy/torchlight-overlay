@@ -175,9 +175,28 @@ pub fn rows(from: u32, to: u32, eps: f64, smart: bool, path: &str) {
     }
     eprintln!();
     out.flush().unwrap_or_else(|e| crate::fail(&format!("{path}: {e}")));
-    let meta = serde_json::json!({ "columns": columns, "rows": n, "games": to - from, "seed0": from, "eps": eps });
+    let meta = serde_json::json!({ "columns": columns, "rows": n, "games": to - from, "seed0": from, "eps": eps,
+        "dtype": "float32-le", "target": TARGET, "potionRefreshes": d.default_settings.potion_refreshes,
+        "instrumentRefreshes": d.default_settings.instrument_refreshes });
     std::fs::write(format!("{path}.json"), meta.to_string()).unwrap_or_else(|e| crate::fail(&format!("{path}.json: {e}")));
     println!("wrote {path}: {n} boards of {} games, {columns} columns", to - from);
+}
+
+/// Full-precision features and the production CPU prediction for checking an exported GPU model.
+/// The fixed random trajectory is independent of the model being checked.
+pub fn probe(seed0: u32, games: u32, path: &str) {
+    use std::io::Write;
+    let file = std::fs::File::create(path).unwrap_or_else(|e| crate::fail(&format!("{path}: {e}")));
+    let mut out = std::io::BufWriter::new(file);
+    for seed in seed0..seed0.checked_add(games).unwrap_or_else(|| crate::fail("probe seed range overflow")) {
+        let g = play(seed, 1.0, false);
+        for s in g.boards.iter().filter(|s| s.phase != Phase::GameOver) {
+            let row = serde_json::json!({ "seed": seed, "features": tree_features(data(), s),
+                "prediction": vorax::value::board_value(s) });
+            writeln!(out, "{row}").unwrap_or_else(|e| crate::fail(&format!("{path}: {e}")));
+        }
+    }
+    out.flush().unwrap_or_else(|e| crate::fail(&format!("{path}: {e}")));
 }
 
 /// Solves (A + λI) w = b by Cholesky (λ left off the bias); A symmetric positive semi-definite.
