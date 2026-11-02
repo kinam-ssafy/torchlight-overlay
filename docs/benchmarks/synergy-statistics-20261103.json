@@ -1,0 +1,277 @@
+{
+  "board_audit": {
+    "balanced_same_sum": {
+      "three_by_three": 9,
+      "two_by_four": 8
+    },
+    "cases": [
+      {
+        "after_one_round_same_seed": [
+          28000,
+          20000
+        ],
+        "archetype_rarity": [
+          [
+            [
+              "agito",
+              "rare"
+            ],
+            [
+              "pest",
+              "normal"
+            ]
+          ],
+          [
+            [
+              "agito",
+              "normal"
+            ],
+            [
+              "pest",
+              "rare"
+            ]
+          ]
+        ],
+        "before": [
+          20000,
+          20000
+        ],
+        "case": "archetype_and_rarity_joint_condition",
+        "instrument_ids": [
+          [
+            [
+              4,
+              1
+            ]
+          ],
+          [
+            [
+              4,
+              1
+            ]
+          ]
+        ],
+        "legacy_features_identical": true,
+        "legacy_prediction": [
+          169257.7224477349,
+          169257.7224477349
+        ]
+      },
+      {
+        "after_one_round_same_seed": [
+          57200,
+          54400
+        ],
+        "archetype_rarity": [
+          [
+            [
+              "pest",
+              "magic"
+            ],
+            [
+              "pest",
+              "magic"
+            ],
+            [
+              "pest",
+              "magic"
+            ]
+          ],
+          [
+            [
+              "pest",
+              "magic"
+            ],
+            [
+              "pest",
+              "magic"
+            ],
+            [
+              "pest",
+              "magic"
+            ]
+          ]
+        ],
+        "before": [
+          30000,
+          30000
+        ],
+        "case": "duplicate_instrument_counts",
+        "instrument_ids": [
+          [
+            [
+              13,
+              1
+            ],
+            [
+              13,
+              3
+            ],
+            [
+              1,
+              1
+            ]
+          ],
+          [
+            [
+              13,
+              1
+            ],
+            [
+              1,
+              3
+            ],
+            [
+              1,
+              1
+            ]
+          ]
+        ],
+        "legacy_features_identical": true,
+        "legacy_prediction": [
+          373258.70212874794,
+          373258.70212874794
+        ]
+      },
+      {
+        "after_one_round_same_seed": [
+          50000,
+          30000
+        ],
+        "archetype_rarity": [
+          [
+            [
+              "pest",
+              "magic"
+            ],
+            [
+              "pest",
+              "magic"
+            ],
+            [
+              "pest",
+              "magic"
+            ]
+          ],
+          [
+            [
+              "pest",
+              "magic"
+            ],
+            [
+              "pest",
+              "magic"
+            ],
+            [
+              "pest",
+              "magic"
+            ]
+          ]
+        ],
+        "before": [
+          30000,
+          30000
+        ],
+        "case": "periodic_acquisition_round",
+        "instrument_ids": [
+          [
+            [
+              25,
+              3
+            ]
+          ],
+          [
+            [
+              25,
+              4
+            ]
+          ]
+        ],
+        "legacy_features_identical": true,
+        "legacy_prediction": [
+          234572.48929338288,
+          234572.48929338288
+        ]
+      }
+    ],
+    "equal_addition_at_q200_a50": {
+      "add50_activity": 10000,
+      "add50_quantity": 2500
+    },
+    "thresholds_in_engine": [
+      8000,
+      28000
+    ]
+  },
+  "statistics": {
+    "success840k": {
+      "games": 512,
+      "champion_count": 358,
+      "candidate_count": 331,
+      "champion_interval95": [
+        0.6581322873328272,
+        0.7373380582775866
+      ],
+      "candidate_interval95": [
+        0.6041244028696175,
+        0.6866626159615692
+      ],
+      "difference_pp": -5.2734375,
+      "gained": 75,
+      "lost": 102,
+      "discordant": 177,
+      "paired_exact_p": 0.05036053951761206
+    },
+    "below300k": {
+      "games": 512,
+      "champion_count": 11,
+      "candidate_count": 7,
+      "champion_interval95": [
+        0.012038074956831063,
+        0.03805766352795905
+      ],
+      "candidate_interval95": [
+        0.006638096992250363,
+        0.027949000488209794
+      ],
+      "difference_pp": -0.78125,
+      "gained": 7,
+      "lost": 11,
+      "discordant": 18,
+      "paired_exact_p": 0.480682373046875
+    },
+    "sample_plan": {
+      "alpha": 0.05,
+      "power": 0.8,
+      "discordance": 0.345703125,
+      "discordance_upper95": 0.387910301675115,
+      "estimates": [
+        {
+          "difference_pp": 1.0,
+          "games_using_pilot": 27134,
+          "games_using_pilot_upper95": 30447
+        },
+        {
+          "difference_pp": 2.0,
+          "games_using_pilot": 6784,
+          "games_using_pilot_upper95": 7612
+        },
+        {
+          "difference_pp": 3.0,
+          "games_using_pilot": 3015,
+          "games_using_pilot_upper95": 3383
+        },
+        {
+          "difference_pp": 5.0,
+          "games_using_pilot": 1086,
+          "games_using_pilot_upper95": 1218
+        }
+      ],
+      "assumption": "new policy has similar discordance; predeclare fresh fixed seeds"
+    },
+    "release_minimum_games": 4096,
+    "note": "individual rate intervals are descriptive; paired exact p compares policies; low-score gained means a worse outcome"
+  },
+  "runtime_model_changed": false,
+  "new_evaluation_games": 0
+}

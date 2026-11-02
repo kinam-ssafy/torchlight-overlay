@@ -1,0 +1,4 @@
+# Development only. Never copied into the portable application.
+xgboost==3.2.0
+numpy==2.3.4
+matplotlib==3.10.7
