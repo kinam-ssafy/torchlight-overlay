@@ -7,6 +7,9 @@ Python, XGBoost, CUDA를 설치하거나 동봉하지 않는다.
 기존 가중치를 작게 보정하며 CPU 계산량을 유지하는 후속 방식은
 [GPU 미세 조정](GPU-FINETUNE.md)에 정리했다.
 
+2026-11-03부터 출고 검증의 최소 표본을 4,096게임으로 높이고 개별 비율의 95% Wilson
+구간을 출력한다. 시너지 입력 한계의 재현과 표본 설계는 [시너지/통계 감사](SYNERGY-STATISTICS.md)를 참고한다.
+
 게임 규칙 시뮬레이션 전체를 CUDA로 이식한 것은 아니다. 학습 데이터를 만드는 게임과
 후보의 실제 추천 성능을 비교하는 게임은 동일한 CPU 규칙 엔진으로 실행한다.
 기본 CPU 스레드는 2개이며 Windows 자식 프로세스 우선순위는 BelowNormal이다.
@@ -28,8 +31,8 @@ qa/gpu-search/venv/Scripts/python vorax/scripts/gpu_search.py fit --run qa/gpu-s
 # 동일한 128개 새 게임에서 후보 3개를 CPU 배포 엔진으로 비교한다.
 qa/gpu-search/venv/Scripts/python vorax/scripts/gpu_search.py screen --run qa/gpu-search/run01 --eval-games 128 --futures 64
 
-# 선별된 후보 1개만 별도 512게임 / 256 futures로 최종 검증한다.
-qa/gpu-search/venv/Scripts/python vorax/scripts/gpu_search.py holdout --run qa/gpu-search/run01 --eval-games 512 --futures 256
+# 선별된 후보 1개만 별도 4096게임 / 256 futures로 최종 검증한다.
+qa/gpu-search/venv/Scripts/python vorax/scripts/gpu_search.py holdout --run qa/gpu-search/run01 --eval-games 4096 --futures 256
 ```
 
 펫에 따른 리롤 조건은 `--potion-refreshes`, `--instrument-refreshes`로 지정한다.
@@ -50,7 +53,7 @@ CPU로의 자동 전환이 감지되면 학습은 실패 처리한다.
 - GPU 예측 오차가 작은 모델이 실제 게임에서도 좋은지는 별개의 문제다.
   `screen`은 각 후보의 실제 840k 달성률, 상한 평균, 하위 10% 점수,
   300k 미만 횟수, 몬스터 수/사용 탱크 수와 CPU 실행 시간을 비교한다.
-- 최종 `holdout`에서 최소 512게임 / 256 futures, 기존 `vorax gate` 통과, paired binomial p < 0.05,
+- 최종 `holdout`에서 최소 4096게임 / 256 futures, 기존 `vorax gate` 통과, paired binomial p < 0.05,
   하위 10%/300k 미만 횟수 비악화, 기존 대비 실행 시간 1.25배 이내를 모두 요구한다.
   이는 같은 게임 수/CPU 스레드/탐색량의 전체 실행 시간이다. OCR과 실시간 화면 지연은
   별도 확인해야 한다. `screen`은 후보 선택용이며 출시 근거로 사용하지 않는다.

@@ -41,7 +41,7 @@ qa/gpu-search/venv/Scripts/python vorax/scripts/gpu_search.py holdout --run qa/g
 
 `--finalists`는 학습이 완료된 서로 다른 후보만 받는다. 여러 후보를 같은 추가 검증에서
 비교하면 Bonferroni 보정 p값도 기록한다. 실제 출고 검증은 새로 보지 않은 시드에서
-후보를 미리 확정하고 최소 512게임/256 futures로 수행해야 한다. 이미 본 97M 구간을
+후보를 미리 확정하고 최소 4096게임/256 futures로 수행해야 한다. 이미 본 97M 구간을
 다시 최종 검증으로 사용하지 않는다. 스크립트는 모델을 자동 교체하지 않는다.
 
 ## 출력과 검증

@@ -42,7 +42,7 @@ qa/gpu-search/venv/Scripts/python vorax/scripts/gpu_search.py screen --run qa/gp
 qa/gpu-search/venv/Scripts/python vorax/scripts/gpu_search.py holdout --run qa/gpu-rl/run01 --engine qa/gpu-finetune/engine.exe --eval-seed 98000000 --eval-games 512 --futures 64
 ```
 
-64 futures 평가는 추가 선별이다. 개선이 확실할 때만 미사용 시드에서 256 futures 이상의
+64 futures 평가는 추가 선별이다. 개선이 확실할 때만 미사용 시드에서 최소 4096게임/256 futures의
 출고 검증을 별도로 진행한다. 기존 gate와 신뢰도/저점/CPU 지연 조건을 모두 확인하며,
 스크립트는 배포 가중치나 설치된 프로그램을 교체하지 않는다.
 

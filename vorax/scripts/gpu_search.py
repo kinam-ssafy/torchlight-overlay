@@ -15,6 +15,7 @@ os.environ.setdefault('OMP_NUM_THREADS', '2')
 os.environ.setdefault('OPENBLAS_NUM_THREADS', '2')
 import numpy as np
 from gpu_model import export_model, predict_export
+from gpu_statistics import release_quality, wilson_interval
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = 840_000
@@ -166,6 +167,8 @@ def scores(path):
 def summarize(rows):
     s = np.array([r['score'] for r in rows.values()])
     return {'games': len(s), 'rate840k': float(np.mean(s >= TARGET)),
+            'rate840k_interval95': wilson_interval(int(np.sum(s >= TARGET)), len(s)),
+            'below300k_interval95': wilson_interval(int(np.sum(s < 300_000)), len(s)),
             'capped_mean': float(np.minimum(s, TARGET).mean()), 'p10': float(np.quantile(s, .1)),
             'below300k': int(np.sum(s < 300_000)),
             'monsters': float(np.mean([r['monsters'] for r in rows.values()])),
@@ -225,7 +228,7 @@ def evaluate(args, holdout=False):
         names = [c['name'] for c in manifest['candidates']]
     report = {'phase': phase, 'policy': 'solver', 'futures': args.futures,
               'seed0': seed, 'games': args.eval_games, 'results': [], 'promoted': False,
-              'release_quality': holdout and args.eval_games >= 512 and args.futures >= 256,
+              'release_quality': release_quality(holdout, args.eval_games, args.futures),
               'finalists': names, 'comparison_count': len(names)}
     base = None
     for name in ['champion', *names]:
