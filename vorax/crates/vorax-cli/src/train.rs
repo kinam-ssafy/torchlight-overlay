@@ -137,18 +137,19 @@ fn gather(from: u32, to: u32, eps: f64, smart: bool, what: &str) -> Vec<Sums> {
     sums
 }
 
-fn linear_features(s: &GameState) -> Vec<f64> {
+fn linear_features(s: &GameState, synergy: bool) -> Vec<f64> {
     let mut sparse = Vec::new();
     features(data(), s, &mut sparse);
     let mut dense = vec![0.0; feature_count(data())];
     for (i, value) in sparse {
         dense[i as usize] = value;
     }
+    if synergy { dense.extend(vorax::value::synergy_features(data(), s)); }
     dense
 }
 
 /// Float32 training rows: tree features + target, or round + linear features + target.
-pub fn rows(from: u32, to: u32, eps: f64, smart: bool, path: &str, linear: bool) {
+pub fn rows(from: u32, to: u32, eps: f64, smart: bool, path: &str, linear: bool, synergy: bool) {
     use std::io::Write;
     let d = data();
     let file = std::fs::File::create(path).unwrap_or_else(|e| crate::fail(&format!("{path}: {e}")));
@@ -167,7 +168,7 @@ pub fn rows(from: u32, to: u32, eps: f64, smart: bool, path: &str, linear: bool)
                 let mut bytes = Vec::new();
                 for b in &g.boards {
                     let x = if linear {
-                        std::iter::once(b.round as f64).chain(linear_features(b)).collect()
+                        std::iter::once(b.round as f64).chain(linear_features(b, synergy)).collect()
                     } else { tree_features(d, b) };
                     for v in x.into_iter().chain([g.y]) {
                         bytes.extend_from_slice(&(v as f32).to_le_bytes());
@@ -177,7 +178,7 @@ pub fn rows(from: u32, to: u32, eps: f64, smart: bool, path: &str, linear: bool)
             })
             .collect();
         if columns == 0 {
-            columns = if linear { feature_count(d) + 2 }
+            columns = if linear { feature_count(d) + 2 + if synergy { vorax::value::synergy_feature_count(d) } else { 0 } }
                 else { tree_features(d, &create_game(d.default_settings, None, Some(1))).len() + 1 };
         }
         for c in &chunks {
@@ -193,21 +194,21 @@ pub fn rows(from: u32, to: u32, eps: f64, smart: bool, path: &str, linear: bool)
     let meta = serde_json::json!({ "columns": columns, "rows": n, "games": to - from, "seed0": from, "eps": eps,
         "dtype": "float32-le", "target": TARGET, "potionRefreshes": d.default_settings.potion_refreshes,
         "instrumentRefreshes": d.default_settings.instrument_refreshes,
-        "features": if linear { "linear-rounds" } else { "tree" } });
+        "features": if synergy { "linear-synergy-v1" } else if linear { "linear-rounds" } else { "tree" } });
     std::fs::write(format!("{path}.json"), meta.to_string()).unwrap_or_else(|e| crate::fail(&format!("{path}.json: {e}")));
     println!("wrote {path}: {n} boards of {} games, {columns} columns", to - from);
 }
 
 /// Full-precision features and the production CPU prediction for checking an exported GPU model.
 /// The fixed random trajectory is independent of the model being checked.
-pub fn probe(seed0: u32, games: u32, path: &str, linear: bool) {
+pub fn probe(seed0: u32, games: u32, path: &str, linear: bool, synergy: bool) {
     use std::io::Write;
     let file = std::fs::File::create(path).unwrap_or_else(|e| crate::fail(&format!("{path}: {e}")));
     let mut out = std::io::BufWriter::new(file);
     for seed in seed0..seed0.checked_add(games).unwrap_or_else(|| crate::fail("probe seed range overflow")) {
         let g = play(seed, 1.0, false);
         for s in g.boards.iter().filter(|s| s.phase != Phase::GameOver) {
-            let mut row = serde_json::json!({ "seed": seed, "features": if linear { linear_features(s) } else { tree_features(data(), s) },
+            let mut row = serde_json::json!({ "seed": seed, "features": if linear { linear_features(s, synergy) } else { tree_features(data(), s) },
                 "prediction": vorax::value::board_value(s) });
             if linear { row["round"] = serde_json::json!(s.round); }
             writeln!(out, "{row}").unwrap_or_else(|e| crate::fail(&format!("{path}: {e}")));

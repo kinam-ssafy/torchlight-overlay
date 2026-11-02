@@ -10,6 +10,7 @@
 //!   vorax train [--games N] [--seed0 S] [--eps E] --rows boards.bin  the games' boards as raw rows, for decision trees
 //!   vorax train --probe boards.jsonl [--games 48] --model model.json  CPU export verification
 //!   Add --linear to --rows or --probe for the existing per-round linear model's features.
+//!   Add --synergy for legacy linear features plus versioned joint-type, duplicate and clock features.
 //!   vorax gate champion.txt challenger.txt                          a new board value against the one in use
 //!   vorax sim --policy solver [--futures N] [--halving] --against champion.txt [--games MAX] [--p1 0.55]
 //!       a sequential test on the champion's seeds: stops as soon as the challenger is clearly better or not
@@ -60,14 +61,16 @@ fn main() {
         "train" => {
             let a = &args[1..];
             let games = arg(a, "--games").unwrap_or(100_000);
-            let linear = a.iter().any(|v| v == "--linear");
+            let synergy = a.iter().any(|v| v == "--synergy");
+            let linear = synergy || a.iter().any(|v| v == "--linear");
             if let Some(path) = arg::<String>(a, "--probe") {
-                return train::probe(arg(a, "--seed0").unwrap_or(90_000_000), arg(a, "--games").unwrap_or(48), &path, linear);
+                return train::probe(arg(a, "--seed0").unwrap_or(90_000_000), arg(a, "--games").unwrap_or(48), &path, linear, synergy);
             }
             if let Some(path) = arg::<String>(a, "--rows") {
-                let seed0 = arg(a, "--seed0").unwrap_or(5_000_000);
-                return train::rows(seed0, seed0 + games, arg(a, "--eps").unwrap_or(0.1), vorax::data().model.is_some(), &path, linear);
+                let seed0: u32 = arg(a, "--seed0").unwrap_or(5_000_000);
+                return train::rows(seed0, seed0.checked_add(games).unwrap_or_else(|| fail("training seed range overflow")), arg(a, "--eps").unwrap_or(0.1), vorax::data().model.is_some(), &path, linear, synergy);
             }
+            if synergy { fail("--synergy requires --rows or --probe; GPU fitting exports the synergy model"); }
             let out: String = arg(a, "--out").unwrap_or_else(|| fail("train: --out model.json (or --rows boards.bin)"));
             train::train(games, arg(a, "--check").unwrap_or((games / 10).max(1000)), arg(a, "--seed0").unwrap_or(5_000_000), arg(a, "--eps").unwrap_or(0.1), vorax::data().model.is_some(), &out)
         }
@@ -86,6 +89,7 @@ fn info() {
     let d = vorax::data();
     println!("odds {}  ·  {} potions, {} instruments  ·  board value: {}", d.odds, d.potions.len(), d.instruments.len(), match &d.model {
         Some(vorax::data::ValueModel::Rounds { rounds }) => format!("linear, {} rounds × {} weights", rounds.len(), rounds[0].len()),
+        Some(vorax::data::ValueModel::Synergy { legacy_rounds, synergy_rounds, .. }) => format!("synergy v1, {} + {} weights per round", legacy_rounds[0].len(), synergy_rounds[0].len()),
         Some(vorax::data::ValueModel::Trees { trees, .. }) => format!("{} trees", trees.len()),
         None => "none (score)".into(),
     });

@@ -20,6 +20,7 @@ fn compare(name: &str, a: &GameState, b: &GameState) -> Value {
     let next_a = dispatch(a, Action::Confirm);
     let next_b = dispatch(b, Action::Confirm);
     json!({"case": name, "legacy_features_identical": x == y,
+           "synergy_features_distinct": value::synergy_features(data(), a) != value::synergy_features(data(), b),
            "before": [ultimate_activity(a), ultimate_activity(b)],
            "legacy_prediction": [value::board_value(a), value::board_value(b)],
            "after_one_round_same_seed": [ultimate_activity(&next_a), ultimate_activity(&next_b)],

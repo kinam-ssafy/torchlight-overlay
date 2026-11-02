@@ -111,6 +111,7 @@ impl Forest {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
 pub enum ValueModel {
+    Synergy { synergy_version: u32, legacy_rounds: Vec<Vec<f64>>, synergy_rounds: Vec<Vec<f64>> },
     Rounds { rounds: Vec<Vec<f64>> },
     Trees { base: f64, trees: Vec<Tree> },
 }
@@ -310,6 +311,16 @@ impl Data {
         let spawn = |r: &str| raw.spawn_rarity.get(r).copied().unwrap_or(0.0);
         let periodic = instruments.iter().filter(|d| matches!(d.timing, Timing::Periodic(_))).map(|d| d.id).collect();
 
+        if let Some(ValueModel::Synergy { synergy_version, legacy_rounds, synergy_rounds }) = &model {
+            let n = instruments.len();
+            let legacy = 31 + n * 13 + n * (n - 1) / 2;
+            let valid = |rows: &Vec<Vec<f64>>, columns| rows.len() == 13
+                && rows.iter().all(|r| r.len() == columns && r.iter().all(|v| v.is_finite()));
+            if *synergy_version != 1 || !valid(legacy_rounds, legacy)
+                || !valid(synergy_rounds, crate::value::synergy_feature_count_for(n)) {
+                return Err("invalid synergy model version, dimensions or coefficients".into());
+            }
+        }
         Ok(Data {
             reference_rules: false,
             commit: raw.commit,

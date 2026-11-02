@@ -68,8 +68,10 @@ def load_rows(path):
     if path.stat().st_size != meta['rows'] * meta['columns'] * 4:
         raise ValueError('truncated or mismatched row file')
     rows = np.memmap(path, mode='r', dtype='<f4', shape=(meta['rows'], meta['columns']))
-    if not np.isfinite(rows).all():
-        raise ValueError('non-finite training rows')
+    # Extended feature files can exceed RAM; bound the temporary finite mask.
+    for start in range(0, len(rows), 8192):
+        if not np.isfinite(rows[start:start + 8192]).all():
+            raise ValueError('non-finite training rows')
     return rows, meta
 
 
