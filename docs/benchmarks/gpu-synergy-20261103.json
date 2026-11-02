@@ -50072,8 +50072,10 @@
   },
   "candidate_artifact": {
     "file": "gpu-synergy-candidate-20261103.json",
-    "sha256": "c3824588e5119a31380c2a59488d782789ba269b12a9a0325bd5dfb06d8411ac",
-    "experimental_only": true
+    "sha256": "f3d1650ab79521145d7b8bc66d2255722ca7a95397dda62de7f84767f4fe46e9",
+    "experimental_only": true,
+    "line_endings": "LF for Git publication",
+    "original_run_sha256": "c3824588e5119a31380c2a59488d782789ba269b12a9a0325bd5dfb06d8411ac"
   },
   "game_data_sha256": "78513454a056b2435fc07392b68a0c59e1f3ead23eaa131e56e61340bf6cdfbf",
   "timing_note": "whole-game simulation elapsed time, not overlay latency; short Python tests and periodic report rendering shared the host",
