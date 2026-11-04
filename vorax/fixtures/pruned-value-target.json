@@ -1,0 +1,12 @@
+{
+  "tanks": [
+    {"activity":32,"archetype":"pest","quantity":36,"rarity":"boss"},
+    {"activity":300,"archetype":"pest","quantity":1,"rarity":"boss"},
+    {"activity":420,"archetype":"agito","quantity":638,"rarity":"magic"},
+    null,null,null
+  ],
+  "instruments":["Contracted Claws","Pig Iron Bone Saw","Black Goat Gut Suture"],
+  "instrumentRounds":[1,2,2],
+  "hand":["Twin Hormone - Pest","Anesthetic Tincture - Aemberon","Compound Leech Solution"],
+  "phase":"potion","round":6,"potionRefreshes":0,"instrumentRefreshes":1
+}

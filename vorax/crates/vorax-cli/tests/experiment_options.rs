@@ -10,6 +10,8 @@ fn malformed_research_settings_cannot_silently_run_the_default_experiment() {
         vec!["train","--goal","mean"],
         vec!["gate","--target-score","1120000"],
         vec!["sim","--against","unused.txt","--target-score","1120000"],
+        vec!["info","--value-candidates"],
+        vec!["sim","--policy","value","--value-candidates"],
     ] {
         let result=Command::new(env!("CARGO_BIN_EXE_vorax")).args(&args).output().unwrap();
         assert!(!result.status.success(),"accepted invalid configuration: {args:?}");
