@@ -110,7 +110,7 @@ pub struct Advice {
 }
 
 /// Potion look-ahead: each card on offer, the next best options up to 4, and a reroll, each played to the end 64 times.
-pub const LOOK_AHEAD: LookAhead = LookAhead { top: 4, playouts: 64, steer: Some(0.3), inner_samples: None, value: Some(true), halving: None, goal: Goal::Target };
+pub const LOOK_AHEAD: LookAhead = LookAhead { top: 4, value_candidates: false, playouts: 64, steer: Some(0.3), inner_samples: None, value: Some(true), halving: None, goal: Goal::Target };
 /// Futures per instrument choice, each judged by its final score counted up to 840k.
 pub const INSTRUMENT_FUTURES: u32 = 64;
 /// How the rounds inside an instrument choice's futures are played: by the smarter player (the board value).
@@ -280,7 +280,8 @@ pub fn prepare_for_goal(x: &ScreenState, futures: Option<u32>, goal: Goal) -> Pr
     }
     let work = if s.phase == Phase::PotionSelect {
         let n = futures.unwrap_or(LOOK_AHEAD.playouts);
-        Work::Potion { s, seed: SEED, la: LookAhead { playouts: n, goal, ..LOOK_AHEAD }, opts: shortlist(&s, SEED, &LOOK_AHEAD), futures: n }
+        let la=LookAhead { playouts: n, goal, ..LOOK_AHEAD };
+        Work::Potion { s, seed: SEED, la, opts: shortlist(&s, SEED, &la), futures: n }
     } else {
         let mut choices: Vec<Pick> = (0..s.hand.len()).map(Pick::Card).collect();
         if can_refresh(&s) {

@@ -238,7 +238,7 @@ fn strategy_matches() {
             }
             let o: Vec<Opt> = list.iter().map(|x| x.0).collect();
             eq("futures", tallies(&potion_futures(&s, seed, &la, &o, 0, 2, true)));
-            let steer = LookAhead { top: 4, playouts: 2, steer: Some(0.3), inner_samples: None, value: None, halving: None, goal: Goal::Target };
+            let steer = LookAhead { top: 4, value_candidates: false, playouts: 2, steer: Some(0.3), inner_samples: None, value: None, halving: None, goal: Goal::Target };
             eq("futuresSteer", tallies(&potion_futures(&s, seed, &steer, &o[..2.min(o.len())], 3, 4, false)));
         } else {
             let choices: Vec<Pick> = c["choices"].as_array().unwrap().iter().map(|x| if x == "refresh" { Pick::Refresh } else { Pick::Card(x.as_u64().unwrap() as usize) }).collect();

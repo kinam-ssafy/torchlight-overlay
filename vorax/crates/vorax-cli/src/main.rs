@@ -14,6 +14,7 @@
 //!   Add --chain for synergy features plus the scheduled special-offer identity and resources.
 //!   --target-score N and --scenario 0..4 are research-only; scenarios force a round-2 special entry.
 //!   --goal success is an experimental binary objective; it is not the default deployed policy.
+//!   sim --policy solver --value-candidates retains immediate targets and adds value-model targets (research).
 //!   vorax gate champion.txt challenger.txt                          a new board value against the one in use
 //!   vorax sim --policy solver [--futures N] [--halving] --against champion.txt [--games MAX] [--p1 0.55]
 //!       a sequential test on the champion's seeds: stops as soon as the challenger is clearly better or not
@@ -53,6 +54,9 @@ fn main() {
             instrument_refreshes: count("--instrument-refreshes",default.instrument_refreshes) })
     } else { None };
     let objective = goal(&args);
+    if args.iter().any(|a|a=="--value-candidates") && (cmd!="sim" || arg::<String>(&args,"--policy").as_deref()!=Some("solver")) {
+        fail("--value-candidates requires sim --policy solver");
+    }
     if cmd == "train" && objective == Goal::Mean { fail("training supports --goal target or success, not mean"); }
     let research_target = if args.iter().any(|a| a == "--target-score") {
         arg::<i64>(&args,"--target-score").unwrap_or_else(|| fail("--target-score requires an integer"))
@@ -194,7 +198,8 @@ fn sim(args: &[String]) {
             // --halving: the potions' futures by successive halving (the same number on average)
             let halving = args.iter().any(|a| a == "--halving").then_some(true);
             (
-                Chooser::Plan(LookAhead { playouts: n, halving, goal: goal(args), ..advisor::LOOK_AHEAD }),
+                Chooser::Plan(LookAhead { playouts: n, halving, goal: goal(args),
+                    value_candidates:args.iter().any(|a|a=="--value-candidates"), ..advisor::LOOK_AHEAD }),
                 Picker::Board { playouts: n, rollout: Policy { samples: 4, horizon: 0, roll_samples: None, steer: None, value: Some(true), goal: goal(args) }, goal: goal(args), refresh_playouts: n },
             )
         }

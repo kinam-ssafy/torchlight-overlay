@@ -587,6 +587,9 @@ pub fn rank_instruments(s: &GameState, seed: u32, playouts: u32, rollout: &Choos
 pub struct LookAhead {
     /// options (best by this round's score) played to the end of the run
     pub top: usize,
+    /// Research: retain the immediate shortlist and add its best omitted value-model target.
+    #[serde(default)]
+    pub value_candidates: bool,
     /// futures played per option
     pub playouts: u32,
     #[serde(default)]
@@ -636,6 +639,17 @@ pub fn shortlist(s: &GameState, seed: u32, la: &LookAhead) -> Vec<(Opt, f64)> {
         if !taken { list.push(i); }
     }
     let mut out: Vec<(Opt, f64)> = list.into_iter().map(|i| now[i]).collect();
+    if la.value_candidates {
+        let p=Policy{value:Some(true),goal:la.goal,..quick};
+        let mut best=None;
+        let mut value=f64::NEG_INFINITY;
+        for &(o,score) in &now {
+            if out.iter().any(|(v,_)|*v==o) {continue;}
+            let v=expected(s,&o,&p,seed,0);
+            if v>value {value=v;best=Some((o,score));}
+        }
+        if let Some(option)=best {out.push(option);}
+    }
     if (!data().reference_rules || s.open_box.is_none()) && can_refresh(s) {
         out.push((Opt::Refresh, ultimate_activity(s) as f64));
     }
@@ -645,10 +659,53 @@ pub fn shortlist(s: &GameState, seed: u32, la: &LookAhead) -> Vec<(Opt, f64)> {
 /// Futures `from` to `to` (excluded) of each potion option, played to the end of the run.
 pub fn potion_futures(s: &GameState, seed: u32, la: &LookAhead, opts: &[Opt], from: u32, to: u32, par: bool) -> Vec<Tally> {
     let inner = Chooser::Ev(Policy { samples: la.inner_samples.unwrap_or(2), horizon: 0, roll_samples: None, steer: la.steer, value: la.value, goal: la.goal });
-    tallies(opts.len(), from, to, par, |c, k| {
+    if !la.value_candidates {
+        return tallies(opts.len(),from,to,par,|c,k| {
+            let sk=mix(seed,9000+k);
+            Tally::ending(&finish(&play_opt(&reseed(s,sk),&opts[c]),sk,&inner,&la.goal.picker()),la.goal)
+        });
+    }
+    if opts.is_empty() { return vec![]; }
+    let one = |k| {
         let sk = mix(seed, 9000 + k);
-        Tally::ending(&finish(&play_opt(&reseed(s, sk), &opts[c]), sk, &inner, &la.goal.picker()), la.goal)
-    })
+        let start = reseed(s, sk);
+        let mut cache: Vec<(GameState,Tally)> = Vec::with_capacity(opts.len());
+        opts.iter().map(|o| {
+            let next = play_opt(&start, o);
+            let key = future_key(next);
+            if let Some((_,t)) = cache.iter().find(|(s,_)| *s==key) { return *t; }
+            let t = Tally::ending(&finish(&next, sk, &inner, &la.goal.picker()), la.goal);
+            cache.push((key,t));
+            t
+        }).collect::<Vec<_>>()
+    };
+    let mut out=vec![Tally::default();opts.len()];
+    // Share only identical post-action states within one future, including its
+    // RNG and resources. Different seeds or merely similar boards never share.
+    // Bound temporary results and add each option's futures in their old order.
+    let batch_size=(1024/opts.len()).max(1);
+    for start in (from..to).step_by(batch_size) {
+        let end=start.saturating_add(batch_size as u32).min(to);
+        if par {
+            let batch:Vec<_>=(start..end).into_par_iter().map(&one).collect();
+            for row in batch {for (sum,t) in out.iter_mut().zip(row) {sum.add(&t);}}
+        } else {
+            for k in start..end {for (sum,t) in out.iter_mut().zip(one(k)) {sum.add(&t);}}
+        }
+    }
+    out
+}
+
+fn future_key(mut s: GameState) -> GameState {
+    // StackVec's backing array contains obsolete entries after clear/remove.
+    // Those bytes are not game state, but its derived equality compares them.
+    s.hand=Hand::from_slice(s.hand.as_slice());
+    s.instruments=Equips::from_slice(s.instruments.as_slice());
+    s.targets=Targets::from_slice(s.targets.as_slice());
+    if let Some(ref mut sandbox)=s.sandbox {
+        sandbox.forced_hand=StackVec::from_slice(sandbox.forced_hand.as_slice());
+    }
+    s
 }
 
 /// Successive halving (Karnin, Koren & Somekh, 2013): `la.playouts` futures per option on average, spread over
@@ -691,18 +748,17 @@ pub fn look_ahead(s: &GameState, seed: u32, la: &LookAhead, par: bool) -> Vec<Ah
     }
     let mut runs: Vec<Run> = shortlist(s, seed, la).into_iter().map(|(o, v)| Run { o, v, t: Tally::default() }).collect();
     let mean = |r: &Run| r.t.goal / r.t.n as f64;
-    let play_more = |r: &mut Run, n: u32| {
-        let t = potion_futures(s, seed, la, &[r.o], r.t.n, r.t.n + n, par)[0];
-        r.t.add(&t);
-    };
     if la.halving.unwrap_or(false) {
         let opts: Vec<Opt> = runs.iter().map(|r| r.o).collect();
         for (r, t) in runs.iter_mut().zip(halved_futures(s, seed, la, &opts, par)) {
             r.t = t;
         }
     } else {
-        for r in runs.iter_mut() {
-            play_more(r, la.playouts);
+        if la.value_candidates {
+            let opts:Vec<_>=runs.iter().map(|r|r.o).collect();
+            for (r,t) in runs.iter_mut().zip(potion_futures(s,seed,la,&opts,0,la.playouts,par)) {r.t=t;}
+        } else {
+            for r in &mut runs {r.t=potion_futures(s,seed,la,&[r.o],0,la.playouts,par)[0];}
         }
     }
     // options dropped early keep their estimate from fewer futures, below the ones kept
@@ -731,4 +787,44 @@ mod tests {
         assert_eq!(tallies(0, 0, 10, true, one), vec![]);
         assert_eq!(tallies(3, 10, 10, true, one), vec![Tally::default(); 3]);
     }
+
+    #[test]
+    fn shared_potion_continuations_match_independent_futures() {
+        for line in include_str!("../../../fixtures/advisor.jsonl").lines() {
+            let record:serde_json::Value=serde_json::from_str(line).unwrap();
+            let screen:crate::advisor::ScreenState=serde_json::from_value(record["screen"].clone()).unwrap();
+            if screen.phase!=crate::advisor::ScreenPhase::Potion {continue;}
+            let s=crate::advisor::to_state(&screen,&mut vec![]);
+            let mut opts:Vec<_>=options(&s).iter().copied().collect();
+            if can_refresh(&s) {opts.push(Opt::Refresh);}
+            opts.extend(opts.clone()); // Guaranteed duplicate transitions as well as real target equivalences.
+            for goal in [Goal::Target,Goal::Mean,Goal::Success] {
+                let la=LookAhead{goal,value_candidates:true,..crate::advisor::LOOK_AHEAD};
+                let inner=Chooser::Ev(Policy{samples:2,horizon:0,roll_samples:None,steer:la.steer,value:la.value,goal});
+                let reference=tallies(opts.len(),3,9,false,|c,k| {
+                    let sk=mix(71,9000+k);
+                    Tally::ending(&finish(&play_opt(&reseed(&s,sk),&opts[c]),sk,&inner,&goal.picker()),goal)
+                });
+                assert_eq!(potion_futures(&s,71,&la,&opts,3,9,false),reference);
+                assert_eq!(potion_futures(&s,71,&la,&opts,3,9,true),reference);
+            }
+        }
+    }
+
+    #[test]
+    fn future_keys_ignore_only_unused_stack_storage() {
+        let a=GameState::default();
+        let mut b=a;
+        b.targets.push(4); b.targets.clear();
+        b.hand.push(Card{kind:CardKind::Potion,id:12}); b.hand.clear();
+        assert_ne!(a,b);
+        assert_eq!(future_key(a),future_key(b));
+        b.rng_state=1;
+        assert_ne!(future_key(a),future_key(b));
+        b=a; b.special_offer=1;
+        assert_ne!(future_key(a),future_key(b));
+        b=a; b.potion_refreshes=1;
+        assert_ne!(future_key(a),future_key(b));
+    }
+
 }
