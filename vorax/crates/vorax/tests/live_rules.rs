@@ -51,6 +51,32 @@ fn owned_tools_can_reappear_but_one_hand_has_no_duplicates() {
 }
 
 #[test]
+fn simultaneous_threshold_rewards_stay_in_the_same_reward_sequence() {
+    let x: ScreenState=serde_json::from_value(serde_json::json!({
+        "tanks":[{"archetype":"agito","rarity":"rare","activity":246,"quantity":178},
+            {"archetype":"agito","rarity":"magic","activity":5,"quantity":24},
+            {"archetype":"agito","rarity":"magic","activity":65,"quantity":97},null,null,null],
+        "hand":["Sinew Garrote","Lady of the Plague Quarter","Sloughed Cortex"],
+        "instruments":["Hyperplastic Frontal Lobe"],"instrumentRounds":[1],
+        "phase":"instrument","round":4,"potionRefreshes":0,"instrumentRefreshes":1
+    })).unwrap();
+    let s=advisor::to_state(&x,&mut vec![]);
+    assert_eq!((s.round,s.pending_picks,s.t8000,s.t28000),(5,2,true,true));
+    let n=bot::pick_and_confirm(&s,2);
+    assert_eq!((n.round,n.phase,n.pending_picks,n.instruments.len()),(5,Phase::InstrumentSelect,1,2));
+    assert_eq!(n.tanks,s.tanks,"no round effects between the two reward picks");
+    let after=bot::pick_and_confirm(&n,0);
+    assert_eq!((after.round,after.phase,after.pending_picks,after.instruments.len()),(5,Phase::PotionSelect,0,3));
+    assert_eq!(after.tanks,s.tanks);
+    assert_eq!(after.instruments[1].acquired_round,after.instruments[2].acquired_round);
+
+    // A high score on a potion screen is not evidence that end-round rewards ran.
+    let mut potion=x.clone(); potion.phase=advisor::ScreenPhase::Potion;
+    let p=advisor::to_state(&potion,&mut vec![]);
+    assert_eq!((p.round,p.pending_picks,p.t8000,p.t28000),(4,0,false,false));
+}
+
+#[test]
 fn opened_kit_rerolls_use_the_box_pool_and_preserve_round() {
     let x: ScreenState=serde_json::from_value(serde_json::json!({
         "tanks":[null,null,null,null,null,null], "hand":["Vivigenic Powder"],

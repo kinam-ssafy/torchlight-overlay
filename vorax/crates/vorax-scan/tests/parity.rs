@@ -15,6 +15,28 @@ fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+#[test]
+fn korean_agito_icons_survive_name_colour_bleed() {
+    let original = decode(&root().join("fixtures/frames/agito-labels-ko-1080p.png"));
+    for height in [720,900,1079] {
+        for gain in [0.85,1.0,1.15] {
+            let mut img = resize(&original,original.width*height/original.height,height);
+            for px in img.data.chunks_exact_mut(4) {
+                for c in &mut px[..3] { *c = (*c as f64*gain).min(255.0) as u8; }
+            }
+            let l = layout_at(img.width,img.height,1.0);
+            for i in 0..3 {
+                for dy in [-1.0,0.0,1.0] {
+                    for dx in [-1.0,0.0,1.0] {
+                        let mut r = l.icon[i]; r.x += dx; r.y += dy;
+                        assert_eq!(vorax_scan::tanks::archetype_of(&img,&r),(vorax::types::Archetype::Agito,true),"{height}/{gain} tank{i} offset{dx}/{dy}");
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub fn decode(path: &PathBuf) -> Img {
     let dec = png::Decoder::new(std::fs::File::open(path).unwrap_or_else(|e| panic!("{}: {e}", path.display())));
     let mut reader = dec.read_info().unwrap();
@@ -151,6 +173,18 @@ fn readings_match() {
                 let names = scan_upstream(&img, data, false);
                 check(&format!("{tag} names"), &serde_json::to_value(&names).unwrap(), &c["names"], &mut failures);
                 let l = layout_at(img.width, img.height, names.ui());
+                if variant != "gamma" {
+                    for (i,tank) in names.state.tanks.iter().enumerate() {
+                        if let Some(tank) = tank {
+                            if names.fields[&format!("tank{i}.archetype")].sure {
+                                // Upstream inferred Agito even from blank crops. The new
+                                // reader may reject those, but must not confidently change a label.
+                                let (found,sure) = vorax_scan::tanks::archetype_of(&img,&l.icon[i]);
+                                if sure { assert_eq!(found,tank.archetype,"modern icon classifier {tag} tank{i}"); }
+                            }
+                        }
+                    }
+                }
                 let size = names.hand_size.unwrap_or_else(|| match with_pictures.hand_ranks.as_ref().map_or(0, |r| r.len()) {
                     0 => 3,
                     n => n,

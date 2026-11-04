@@ -39,31 +39,61 @@ pub fn stats(total: Option<&str>, aq: Option<&str>) -> (f64, f64, bool) {
 
 /// Archetype from the little icon above a tank's name, by colour.
 pub fn archetype_of(img: &Img, r: &Rect) -> (Archetype, bool) {
-    let mut n = [(Archetype::BoneSentry, 0usize), (Archetype::Pest, 0), (Archetype::Aemberon, 0)];
+    classify_archetype(img, r, false)
+}
+
+fn classify_archetype(img: &Img, r: &Rect, upstream: bool) -> (Archetype, bool) {
+    let mut n = [(Archetype::BoneSentry, 0usize), (Archetype::Pest, 0), (Archetype::Aemberon, 0), (Archetype::Agito, 0)];
+    let mut brightness = [[0usize; 256]; 4];
+    let mut peak = 0usize;
     let x0 = r.x.floor().max(0.0) as usize;
     let y0 = r.y.floor().max(0.0) as usize;
+    // The label can enter the bottom of this small ROI at localized UI scales.
+    // Its colour encodes rarity, not archetype. Keep the icon's upper core.
+    let bottom = r.y + r.h * if upstream { 1.0 } else { 0.8 };
     let mut y = y0;
-    while (y as f64) < (img.height as f64).min(r.y + r.h) {
+    while (y as f64) < (img.height as f64).min(bottom) {
         let mut x = x0;
         while (x as f64) < (img.width as f64).min(r.x + r.w) {
             let (rr, gg, bb) = img.px(x, y);
             let (h, s, v) = hsv(rr, gg, bb);
             if v >= 0.45 {
-                if (35.0..=65.0).contains(&h) && s >= 0.5 {
-                    n[0].1 += 1;
+                let colour = if (35.0..=65.0).contains(&h) && s >= 0.5 {
+                    Some(0)
                 } else if (255.0..=305.0).contains(&h) && s >= 0.5 {
-                    n[1].1 += 1;
+                    Some(1)
                 } else if (190.0..=240.0).contains(&h) && s >= 0.25 {
-                    n[2].1 += 1;
+                    Some(2)
+                } else if !upstream && (h <= 20.0 || h >= 340.0) && s >= 0.5 {
+                    Some(3)
+                } else { None };
+                if let Some(i) = colour {
+                    n[i].1 += 1;
+                    let level = rr.max(gg).max(bb) as usize;
+                    brightness[i][level] += 1;
+                    peak = peak.max(level);
                 }
             }
             x += 1;
         }
         y += 1;
     }
+    if !upstream {
+        // The red tank frame surrounds every icon. Compare the bright glyph
+        // core, not its dimmer backdrop; a relative cutoff follows exposure.
+        let floor = (peak as f64 * 0.8).ceil() as usize;
+        for i in 0..n.len() { n[i].1 = brightness[i][floor..].iter().sum(); }
+    }
     let mut sorted = n;
     sorted.sort_by(|a, b| b.1.cmp(&a.1));
     let (best, count) = sorted[0];
+    // Require positive icon evidence. In particular, blue name pixels at the
+    // edge of a red icon must not turn an Agito into an Aemberon. An empty or
+    // evenly mixed crop is unknown, never a confidently inferred Agito.
+    if !upstream {
+        let evidence = (4.0 * r.w * r.h / (16.5 * 16.5)).ceil().max(2.0) as usize;
+        return (best, count >= evidence && count >= 2 * sorted[1].1);
+    }
     if count >= 4 {
         (best, true)
     } else if count >= 2 {
@@ -74,6 +104,35 @@ pub fn archetype_of(img: &Img, r: &Rect) -> (Archetype, bool) {
 }
 
 const MAX_COMBOS: usize = 200_000;
+
+#[cfg(test)]
+mod archetype_tests {
+    use super::*;
+
+    #[test]
+    fn all_four_icons_require_positive_dominant_colour() {
+        let colours = [(Archetype::Agito,[240,30,30,255]), (Archetype::BoneSentry,[240,210,30,255]),
+            (Archetype::Pest,[180,30,240,255]), (Archetype::Aemberon,[60,150,240,255])];
+        let r = Rect::new(0.0,0.0,16.0,16.0);
+        assert!(!archetype_of(&Img::new(16,16),&r).1);
+        for (expected, colour) in colours {
+            let mut img = Img::new(16,16);
+            // A real icon plus four unrelated pixels, as with a name at the ROI edge.
+            for px in img.data.chunks_exact_mut(4).take(32) { px.copy_from_slice(&colour); }
+            for (other, noise) in colours {
+                if other == expected { continue; }
+                for px in img.data.chunks_exact_mut(4).skip(32).take(4) { px.copy_from_slice(&noise); }
+                assert_eq!(archetype_of(&img,&r),(expected,true));
+                let mut mixed = img.clone();
+                for px in mixed.data.chunks_exact_mut(4).skip(32).take(32) { px.copy_from_slice(&noise); }
+                assert!(!archetype_of(&mixed,&r).1,"mixed {expected:?}/{other:?}");
+            }
+            let mut faint = Img::new(16,16);
+            for px in faint.data.chunks_exact_mut(4).take(3) { px.copy_from_slice(&colour); }
+            assert!(!archetype_of(&faint,&r).1);
+        }
+    }
+}
 
 /// Most stray glyphs dropped from one end of a line: a cursor over the label read as "21" (1x36 as 1x3621).
 const MAX_STRAY: usize = 2;
@@ -227,7 +286,7 @@ pub fn read_tank(img: &Img, g: &[f32], l: &Layout, i: usize, data: &ScanData, gl
     }
     let (rarity, sure) = rarity_of(rgb);
     fields.insert(format!("tank{i}.rarity"), FieldRead { sure, guess: Some(rarity_name(rarity).into()), ..Default::default() });
-    let (archetype, a_sure) = archetype_of(img, &l.icon[i]);
+    let (archetype, a_sure) = classify_archetype(img, &l.icon[i], !glow);
     fields.insert(format!("tank{i}.archetype"), FieldRead { sure: a_sure, guess: Some(archetype_name(archetype).into()), ..Default::default() });
 
     let (total, aq) = match dim_stats {

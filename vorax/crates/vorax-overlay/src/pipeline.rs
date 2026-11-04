@@ -32,7 +32,78 @@ pub fn trustworthy(reading: &Reading) -> bool {
         && !reading.state.hand.is_empty()
         && (0..reading.state.hand.len()).all(|i| reading.fields.get(&format!("hand{i}")).is_some_and(|f| f.sure))
         && (0..reading.state.instruments.len()).all(|i| reading.fields.get(&format!("instrument{i}")).is_some_and(|f| f.sure))
+        && reading.state.tanks.iter().enumerate().all(|(i,t)| t.is_none() || reading.fields.get(&format!("tank{i}.archetype")).is_some_and(|f| f.sure))
         && (reading.state.phase == vorax::advisor::ScreenPhase::Protocol || reading.fields.get("refreshes").is_some_and(|f| f.sure))
+}
+
+/// Ask about the same slot the ownership tracker cannot settle. Raw icon
+/// uncertainty alone is insufficient: a visually ambiguous old tool can already
+/// be known from its offer, while a new tool still needs its description.
+fn recovery_slots(panel: &vorax_scan::instruments::InstrumentsRead, reading: &Reading, tracker: &InstrumentTracker, trigger: Option<&str>) -> Vec<usize> {
+    if tracker.owned.is_empty() {
+        return (0..panel.names.len()).filter(|i| !panel.fields[&format!("instrument{i}")].sure).collect();
+    }
+    let mut probe = reading.clone();
+    probe.state.instruments = panel.names.clone();
+    probe.instrument_ranks = Some(panel.ranks.clone());
+    probe.fields.retain(|key, _| !key.starts_with("instrument"));
+    probe.fields.extend(panel.fields.clone());
+    let tracked = track_instruments(tracker, &probe, trigger);
+    (0..tracked.instruments.len()).filter(|i| !tracked.fields[&format!("instrument{i}")].sure)
+        .map(|i| i + tracked.tracker.start).filter(|i| *i < panel.locations.len()).collect()
+}
+
+fn tool_fits_slot(panel: &vorax_scan::instruments::InstrumentsRead, i: usize, name: &str, tracker: &InstrumentTracker) -> bool {
+    if i >= panel.names.len() || i < tracker.start { return false; }
+    // An uncertain picture's nearest name is not proof of duplicate ownership.
+    if panel.names.iter().enumerate().any(|(j,n)| j != i && n == name
+        && panel.fields.get(&format!("instrument{j}")).is_some_and(|f| f.sure))
+        || tracker.owned.iter().enumerate().any(|(j,n)| j + tracker.start != i && n == name
+            && !tracker.unsure.iter().any(|q| q.slot == j)) { return false; }
+    let slot = i - tracker.start;
+    if tracker.owned.get(slot).is_some_and(|n| n != name)
+        && !tracker.unsure.iter().any(|q| q.slot == slot) { return false; }
+    let offer = tracker.unsure.iter().find(|q| q.slot == slot).map(|q| &q.offer)
+        .or_else(|| (slot == tracker.owned.len()).then_some(tracker.offer.as_ref()).flatten());
+    !offer.is_some_and(|offer| !offer.iter().any(|n| n == name))
+}
+
+fn confirm_tool(panel: &mut vorax_scan::instruments::InstrumentsRead, i: usize, name: String, tracker: &InstrumentTracker) -> bool {
+    if !tool_fits_slot(panel,i,&name,tracker) { return false; }
+    panel.names[i] = name.clone();
+    panel.ranks[i] = vec![(name.clone(),1.0)];
+    panel.fields.insert(format!("instrument{i}"), vorax_scan::reading::FieldRead { sure:true, guess:Some(name), ..Default::default() });
+    true
+}
+
+/// Resolve only a unique eligible slot. Clicking the requested icon is not evidence
+/// that the player actually opened it; offer history must disambiguate multiple slots.
+fn recover_tool(panel: &mut vorax_scan::instruments::InstrumentsRead, unknown: &[usize], name: String, tracker: &mut InstrumentTracker) -> bool {
+    let mut slots = unknown.iter().copied().filter(|&i| tool_fits_slot(panel,i,&name,tracker));
+    let Some(i) = slots.next() else { return false; };
+    if slots.next().is_some() { return false; }
+    if !confirm_tool(panel,i,name.clone(),tracker) { return false; }
+    let slot = i - tracker.start;
+    // Preserve this explicit confirmation even if an unrelated card/tank still
+    // blocks advice. Never commit the other slots' raw guesses or advance the offer.
+    if tracker.unsure.iter().any(|q| q.slot == slot) && slot < tracker.owned.len() {
+        tracker.owned[slot] = name;
+        tracker.unsure.retain(|q| q.slot != slot);
+    }
+    true
+}
+
+/// Keep observed offers for unresolved picks without treating guessed names as
+/// owned facts. Other unread fields must still leave the previous history intact.
+fn can_remember_pending_tools(reading: &Reading, tracker: &InstrumentTracker) -> bool {
+    if tracker.unsure.is_empty() || !reading.fields.get("round").is_some_and(|f| f.sure) { return false; }
+    let mut probe = reading.clone();
+    for i in 0..reading.state.instruments.len() {
+        let Some(field) = probe.fields.get_mut(&format!("instrument{i}")) else { return false; };
+        if !field.sure && !tracker.unsure.iter().any(|q| q.slot == i && !q.offer.is_empty()) { return false; }
+        field.sure = true;
+    }
+    trustworthy(&probe)
 }
 
 pub enum Outcome {
@@ -82,6 +153,14 @@ fn resumes(before: Option<i32>, now: Option<i32>) -> bool {
         (Some(b), Some(n)) => n > 1 && b < 13 && n >= b,
         _ => false,
     }
+}
+
+fn tracking_trigger<'a>(reading: &Reading, trigger: Option<&'a str>, opening: bool, before: Option<i32>) -> (Option<&'a str>, bool) {
+    let sure = reading.fields.get("round").is_some_and(|f| f.sure);
+    let trigger = if opening && sure && reading.state.round == Some(1)
+        && reading.state.phase == vorax::advisor::ScreenPhase::Instrument { Some("screen") } else { trigger };
+    let resumed = trigger == Some("screen") && resumes(before,sure.then_some(reading.state.round.unwrap_or(1)));
+    (if resumed { None } else { trigger },resumed)
 }
 
 /// Instrument rerolls a game starts with, by Intern Shelley level (src/data/shelley.ts).
@@ -185,26 +264,30 @@ impl Pipeline {
                 let layout = layout_at(img.width, img.height, ui).shifted_hand(dy);
                 if korean {
                     if let Some(mut panel) = vorax_scan::instruments::refine_with_starting(&img, &layout, data, &self.starting_items) {
-                        let unknown: Vec<_> = (0..panel.names.len()).filter(|i| !panel.fields[&format!("instrument{i}")].sure).collect();
+                        let (tracking,_) = tracking_trigger(&names,trigger,self.opening_offer,self.last.as_ref().and_then(|(r,..)|r.state.round));
+                        let unknown = recovery_slots(&panel, &names, &self.tracker, tracking);
                         self.help_icon = unknown.first().and_then(|i| panel.locations.get(*i)).copied();
-                        // A single unread slot can be identified by elimination. Never assign a
-                        // detail to an arbitrary slot, or to another tool the panel already shows.
-                        if let [i] = unknown.as_slice() {
+                        // Read a detail even when several tools are unknown. Only a unique
+                        // match to their observed offers may settle one of those slots.
+                        if !unknown.is_empty() {
                             if let Some(detail) = crate::recovery::read_detail(&img, read) {
                                 match detail {
                                     crate::recovery::Detail::StartingItem => {
-                                        self.starting_items.learn_at(&img, panel.locations[*i]);
-                                        if let Some(corrected) = vorax_scan::instruments::refine_with_starting(&img, &layout, data, &self.starting_items) {
-                                            removed_start = corrected.names.len() + 1 == panel.names.len();
-                                            panel = corrected;
+                                        if let [i] = unknown.as_slice() {
+                                            self.starting_items.learn_at(&img, panel.locations[*i]);
+                                            if let Some(corrected) = vorax_scan::instruments::refine_with_starting(&img, &layout, data, &self.starting_items) {
+                                                removed_start = corrected.names.len() + 1 == panel.names.len();
+                                                panel = corrected;
+                                            }
                                         }
                                     }
-                                    crate::recovery::Detail::Tool(name) if !panel.names.iter().enumerate().any(|(j,n)| j != *i && *n == name) => {
-                                        panel.names[*i] = name.clone();
-                                        panel.ranks[*i] = vec![(name.clone(),1.0)];
-                                        panel.fields.insert(format!("instrument{i}"), vorax_scan::reading::FieldRead { sure:true, guess:Some(name), ..Default::default() });
+                                    crate::recovery::Detail::Tool(name) => {
+                                        if tracking == Some("screen") {
+                                            recover_tool(&mut panel,&unknown,name,&mut InstrumentTracker::default());
+                                        } else {
+                                            recover_tool(&mut panel,&unknown,name,&mut self.tracker);
+                                        }
                                     }
-                                    _ => {}
                                 }
                             }
                         }
@@ -236,16 +319,9 @@ impl Pipeline {
         }
         // the screen opened again on the game under way (Escape and back skips long animations): what's known of it
         // (instruments and their rounds, rerolls) is kept
-        let round_sure = raw.fields.get("round").is_some_and(|f| f.sure);
-        let trigger = if self.opening_offer && round_sure
-            && raw.state.round == Some(1) && raw.state.phase == vorax::advisor::ScreenPhase::Instrument {
-            // This can be a rerolled first offer when the overlay was restarted. The log
-            // proves there are no equipped tools, regardless of the map's starting-item art.
-            Some("screen")
-        } else { trigger };
         let before = self.last.as_ref().and_then(|(r, ..)| r.state.round);
-        self.resumed = trigger == Some("screen") && resumes(before, round_sure.then_some(raw.state.round.unwrap_or(1)));
-        let trigger = if self.resumed { None } else { trigger };
+        let (trigger,resumed) = tracking_trigger(&raw,trigger,self.opening_offer,before);
+        self.resumed = resumed;
         if trigger == Some("screen") {
             self.instrument_refreshes = None;
             self.potion_refreshes = None;
@@ -289,7 +365,10 @@ impl Pipeline {
         reading.state.shelley = Some(self.shelley);
         self.fill_rerolls(&mut reading);
         let read_ms = t.elapsed().as_secs_f64() * 1000.0;
-        if !trustworthy(&reading) { return Outcome::Uncertain { reading: Box::new(reading) }; }
+        if !trustworthy(&reading) {
+            if can_remember_pending_tools(&reading,&tr.tracker) { self.tracker = tr.tracker; }
+            return Outcome::Uncertain { reading: Box::new(reading) };
+        }
         if trigger != Some("screen") {
             carry_open_box(self.last.as_ref().map(|(r, ..)| &r.state), &mut reading.state);
         }
@@ -798,6 +877,157 @@ mod tests {
                 assert_eq!(serde_json::to_value(&reading.state).unwrap(),baseline.clone().unwrap());
             }
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires Korean OCR and the bundled helper"]
+    fn opened_pituitary_description_is_legible() {
+        use super::*;
+        unsafe { let _ = windows::Win32::System::WinRT::RoInitialize(windows::Win32::System::WinRT::RO_INIT_MULTITHREADED); }
+        let ocr = crate::app::ocr::Ocr::new().unwrap();
+        let frame = decode_png(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames/pituitary-detail-ko-1080p.png")).unwrap();
+        let mut read = |crop: &Img| ocr.read(crop).unwrap();
+        for height in [720,900,1079] {
+            let img = vorax_scan::pixels::resize(&frame,frame.width*height/frame.height,height);
+            assert!(matches!(crate::recovery::read_detail(&img,&mut read),Some(crate::recovery::Detail::Tool(n)) if n == "Hypertrophic Pituitary"));
+        }
+    }
+
+    #[test]
+    fn recovery_targets_unsettled_pick_not_an_ambiguous_known_icon() {
+        use super::*;
+        let frame = decode_png(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames/instrument-selected-ko-1080p.png")).unwrap();
+        let mut panel = vorax_scan::instruments::refine_instruments(&frame,&layout_at(frame.width,frame.height,1.0),scan_data()).unwrap();
+        assert_eq!(panel.names.len(),2);
+        // Both icon pictures are ambiguous, but the first tool is already known.
+        panel.names = vec!["Hyperplastic Frontal Lobe".into(),"Sinew Garrote".into()];
+        for f in panel.fields.values_mut() { f.sure = false; }
+        panel.ranks = vec![vec![("Hyperplastic Frontal Lobe".into(),0.8)],vec![("Sinew Garrote".into(),0.8)]];
+        let tracker = InstrumentTracker { owned:vec!["Hypertrophic Pituitary".into()],rounds:vec![1],
+            offer:Some(vec!["Lady of the Plague Quarter".into(),"Two-Inch Skull Nail".into(),"Fouled Scraper".into()]),..Default::default() };
+        let mut reading = scan(&frame,scan_data(),false);
+        reading.state.phase = vorax::advisor::ScreenPhase::Potion;
+        reading.state.round = Some(3);
+        assert_eq!(recovery_slots(&panel,&reading,&tracker,None),[1]);
+        let (trigger,resumed) = tracking_trigger(&reading,Some("screen"),false,Some(2));
+        assert!(resumed);
+        assert_eq!(recovery_slots(&panel,&reading,&tracker,trigger),[1],"reopening must preserve the recovery target");
+        assert!(!confirm_tool(&mut panel,1,"Hypertrophic Pituitary".into(),&tracker),"opening the known tool must not overwrite the new slot");
+        assert!(!confirm_tool(&mut panel,1,"Sloughed Cortex".into(),&tracker),"the picked tool must belong to its actual offer");
+        assert!(confirm_tool(&mut panel,1,"Lady of the Plague Quarter".into(),&tracker));
+        assert!(recovery_slots(&panel,&reading,&tracker,None).is_empty());
+        reading.state.instruments = panel.names.clone();
+        reading.instrument_ranks = Some(panel.ranks.clone());
+        reading.fields.extend(panel.fields.clone());
+        let next = track_instruments(&tracker,&reading,None);
+        assert_eq!(next.instruments,["Hypertrophic Pituitary","Lady of the Plague Quarter"]);
+        // After closing the detail, the raw icon can be ambiguous again without asking twice.
+        panel.fields.get_mut("instrument1").unwrap().sure = false;
+        panel.ranks[1] = vec![("Sinew Garrote".into(),0.8)];
+        assert!(recovery_slots(&panel,&reading,&next.tracker,None).is_empty());
+    }
+
+    #[test]
+    fn pending_tool_history_requires_complete_non_tool_evidence() {
+        use super::*;
+        use vorax_scan::track::Unsure;
+        let frame = decode_png(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames/board-1080p.png")).unwrap();
+        let mut reading = scan(&frame,scan_data(),true);
+        reading.state.instruments = vec!["Hypertrophic Pituitary".into()];
+        reading.fields.insert("instrument0".into(),vorax_scan::reading::FieldRead::sure(false));
+        let tracker = InstrumentTracker { owned:reading.state.instruments.clone(),
+            unsure:vec![Unsure { slot:0,offer:vec!["Hypertrophic Pituitary".into(),"Prismatic Liver".into()],looks:0 }],
+            ..Default::default() };
+        assert!(!trustworthy(&reading));
+        assert!(can_remember_pending_tools(&reading,&tracker));
+        assert!(!can_remember_pending_tools(&reading,&InstrumentTracker::default()),"unknown icons without offer evidence are not history");
+        reading.fields.get_mut("hand0").unwrap().sure = false;
+        assert!(!can_remember_pending_tools(&reading,&tracker));
+        reading.fields.get_mut("hand0").unwrap().sure = true;
+        reading.fields.get_mut("round").unwrap().sure = false;
+        assert!(!can_remember_pending_tools(&reading,&tracker));
+        reading.fields.get_mut("round").unwrap().sure = true;
+        reading.problems.push(Problem::Unreadable { field:"tank0.quantity".into() });
+        assert!(!can_remember_pending_tools(&reading,&tracker));
+    }
+
+    #[test]
+    fn uncertain_duplicate_icon_does_not_block_a_confirmed_tooltip() {
+        use super::*;
+        let frame = decode_png(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames/instrument-selected-ko-1080p.png")).unwrap();
+        let mut panel = vorax_scan::instruments::refine_instruments(&frame,&layout_at(frame.width,frame.height,1.0),scan_data()).unwrap();
+        let name = "Lady of the Plague Quarter".to_string();
+        panel.names = vec![name.clone(),"Sinew Garrote".into()];
+        for f in panel.fields.values_mut() { f.sure = false; }
+        let mut tracker = InstrumentTracker { owned:vec!["Hypertrophic Pituitary".into()],rounds:vec![1],
+            offer:Some(vec![name.clone()]),..Default::default() };
+        assert!(recover_tool(&mut panel,&[1],name.clone(),&mut tracker));
+        assert_eq!(panel.names[1],name);
+        assert_eq!(tracker.owned,["Hypertrophic Pituitary"],"do not invent ownership of an untracked slot");
+        panel.fields.get_mut("instrument0").unwrap().sure = true;
+        assert!(!recover_tool(&mut panel,&[1],name,&mut tracker),"a confident duplicate is still rejected");
+    }
+
+    #[test]
+    fn multiple_unknown_tools_recover_sequentially_without_committing_other_guesses() {
+        use super::*;
+        use vorax_scan::track::Unsure;
+        let frame = decode_png(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames/instrument-selected-ko-1080p.png")).unwrap();
+        let mut panel = vorax_scan::instruments::refine_instruments(&frame,&layout_at(frame.width,frame.height,1.0),scan_data()).unwrap();
+        let first = "Hypertrophic Pituitary".to_string();
+        let second = "Lady of the Plague Quarter".to_string();
+        panel.names = vec![second.clone(),first.clone()]; // two misleading nearest-icon guesses
+        panel.ranks = vec![vec![],vec![]];
+        for f in panel.fields.values_mut() { f.sure = false; }
+        let raw = (panel.names.clone(),panel.ranks.clone(),panel.fields.clone());
+        let mut tracker = InstrumentTracker { owned:panel.names.clone(),rounds:vec![1,3],
+            unsure:vec![Unsure { slot:0,offer:vec![first.clone()],looks:2 },
+                Unsure { slot:1,offer:vec![second.clone()],looks:2 }],..Default::default() };
+        let mut reading = scan(&frame,scan_data(),false);
+        reading.state.phase = vorax::advisor::ScreenPhase::Potion;
+        reading.state.round = Some(3);
+        let unknown = recovery_slots(&panel,&reading,&tracker,None);
+        assert_eq!(unknown,[0,1]);
+        assert!(recover_tool(&mut panel,&unknown,first.clone(),&mut tracker));
+        assert_eq!(tracker.owned,[first.clone(),first.clone()]);
+        assert_eq!(tracker.unsure.iter().map(|q|q.slot).collect::<Vec<_>>(),[1]);
+        // Another frame closes the first explanation and restores the same bad pictures.
+        (panel.names,panel.ranks,panel.fields) = raw;
+        let unknown = recovery_slots(&panel,&reading,&tracker,None);
+        assert_eq!(unknown,[1]);
+        assert!(!recover_tool(&mut panel,&unknown,first.clone(),&mut tracker),"known tool cannot overwrite slot 2");
+        assert!(recover_tool(&mut panel,&unknown,second.clone(),&mut tracker));
+        assert_eq!(tracker.owned,[first,second]);
+        assert!(tracker.unsure.is_empty());
+        assert!(recovery_slots(&panel,&reading,&tracker,None).is_empty());
+        assert_eq!(tracker.rounds,[1,3]);
+    }
+
+    #[test]
+    fn ambiguous_detail_does_not_choose_an_arbitrary_unknown_slot() {
+        use super::*;
+        let frame = decode_png(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames/instrument-selected-ko-1080p.png")).unwrap();
+        let mut panel = vorax_scan::instruments::refine_instruments(&frame,&layout_at(frame.width,frame.height,1.0),scan_data()).unwrap();
+        for f in panel.fields.values_mut() { f.sure = false; }
+        let original = panel.names.clone();
+        let mut tracker = InstrumentTracker::default();
+        assert!(!recover_tool(&mut panel,&[0,1],"Hypertrophic Pituitary".into(),&mut tracker));
+        assert_eq!(panel.names,original);
+        assert!(tracker.owned.is_empty());
+        assert!(panel.fields.values().all(|f|!f.sure));
+    }
+
+    #[test]
+    fn uncertain_archetype_suppresses_advice_even_when_stats_are_readable() {
+        use super::*;
+        let frame = decode_png(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames/board-1080p.png")).unwrap();
+        let mut reading = scan(&frame,scan_data(),true);
+        assert!(trustworthy(&reading));
+        reading.fields.get_mut("tank0.archetype").unwrap().sure = false;
+        assert!(!trustworthy(&reading));
+        reading.fields.shift_remove("tank0.archetype");
+        assert!(!trustworthy(&reading));
     }
 
     #[test]

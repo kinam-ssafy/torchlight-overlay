@@ -183,12 +183,19 @@ pub fn to_state(x: &ScreenState, unknown: &mut Vec<String>) -> GameState {
         *t = m.as_ref().map(|m| Monster { archetype: m.archetype, rarity: m.rarity, activity: m.activity, quantity: m.quantity });
     }
     let had = equipped.len() + (x.phase == ScreenPhase::Instrument) as usize;
+    let reward_offer = !data().reference_rules && x.phase == ScreenPhase::Instrument && !equipped.is_empty();
+    // A reward offer is already after the printed round's end effects. Both
+    // thresholds can have fired together; the next reward must be picked before
+    // another potion/round is played. A potion screen alone cannot prove this.
+    let score: i64 = tanks.iter().flatten().map(Monster::total).sum();
+    let unlocked = if reward_offer { had.max(1 + crate::game::THRESHOLDS.into_iter().filter(|&t| score >= t).count()) } else { had };
+    let pending = if reward_offer { unlocked.saturating_sub(equipped.len()) as i32 } else { s.pending_picks };
     GameState {
         tanks,
         instruments: equipped,
         // A reward tool is shown after the printed round's effects have run.
         // The engine's instrument phase already belongs to the following round.
-        round: x.round.unwrap_or(1) + i32::from(!data().reference_rules && x.phase == ScreenPhase::Instrument && !x.instruments.is_empty()),
+        round: x.round.unwrap_or(1) + i32::from(reward_offer),
         phase: if potion { Phase::PotionSelect } else { Phase::InstrumentSelect },
         hand,
         potion_refreshes: x.potion_refreshes.unwrap_or(0),
@@ -196,8 +203,9 @@ pub fn to_state(x: &ScreenState, unknown: &mut Vec<String>) -> GameState {
         open_box: x.open_box.as_deref().and_then(|n| data().potion_by_name(n))
             .filter(|&id| matches!(data().potion(id).targeting, Targeting::Box(_))),
         // past thresholds only matter for whether more instruments are coming
-        t8000: had >= 2,
-        t28000: had >= 3,
+        t8000: unlocked >= 2,
+        t28000: unlocked >= 3,
+        pending_picks: pending,
         ..s
     }
 }
