@@ -1,13 +1,19 @@
 //! vorax: the Rust Vorax advisor and simulator from the command line. Read-only: it prints advice, it never
 //! touches the game.
 //!
-//!   vorax advise [screen.json] [--futures N] [--goal target|mean] [--quick] [--single]   advice for a screen (stdin when no file)
+//!   vorax advise [screen.json] [--futures N] [--goal target|mean|success] [--quick] [--single]   advice for a screen (stdin when no file)
 //!   vorax bench [fixtures-dir]                                      advice timings against the TypeScript's
 //!   vorax sim [--games N] [--seed0 S] [--policy value|steer|solver] whole games, score stats
 //!   vorax read <screenshot.png> [--advise]                          read a screenshot of the game (and advise on it)
 //!   vorax info                                                      the data loaded (odds date, cards)
 //!   vorax train [--games N] [--check M] [--seed0 S] [--eps E] --out model.json   fit a board value on simulated games
 //!   vorax train [--games N] [--seed0 S] [--eps E] --rows boards.bin  the games' boards as raw rows, for decision trees
+//!   vorax train --probe boards.jsonl [--games 48] --model model.json  CPU export verification
+//!   Add --linear to --rows or --probe for the existing per-round linear model's features.
+//!   Add --synergy for legacy linear features plus versioned joint-type, duplicate and clock features.
+//!   Add --chain for synergy features plus the scheduled special-offer identity and resources.
+//!   --target-score N and --scenario 0..4 are research-only; scenarios force a round-2 special entry.
+//!   --goal success is an experimental binary objective; it is not the default deployed policy.
 //!   vorax gate champion.txt challenger.txt                          a new board value against the one in use
 //!   vorax sim --policy solver [--futures N] [--halving] --against champion.txt [--games MAX] [--p1 0.55]
 //!       a sequential test on the champion's seeds: stops as soon as the challenger is clearly better or not
@@ -46,8 +52,23 @@ fn main() {
         Some(vorax::Settings { potion_refreshes: count("--potion-refreshes",default.potion_refreshes),
             instrument_refreshes: count("--instrument-refreshes",default.instrument_refreshes) })
     } else { None };
-    if model.is_some() || settings.is_some() {
-        vorax::data::configure(model.as_deref(), settings).unwrap_or_else(|e| fail(&e));
+    let objective = goal(&args);
+    if cmd == "train" && objective == Goal::Mean { fail("training supports --goal target or success, not mean"); }
+    let research_target = if args.iter().any(|a| a == "--target-score") {
+        arg::<i64>(&args,"--target-score").unwrap_or_else(|| fail("--target-score requires an integer"))
+    } else { TARGET };
+    let scenario = if args.iter().any(|a| a == "--scenario") {
+        arg::<u8>(&args,"--scenario").unwrap_or_else(|| fail("--scenario requires an integer from 0 to 4"))
+    } else { 0 };
+    if cmd == "gate" && (research_target != TARGET || objective != Goal::Target) {
+        fail("gate supports only the legacy 840k capped-score comparison; use the research paired evaluator for other objectives");
+    }
+    if args.iter().any(|a| a == "--against") && research_target != TARGET {
+        fail("--against uses the legacy 840k sequential test; use fixed paired outcomes for other targets");
+    }
+    if model.is_some() || settings.is_some() || args.iter().any(|a| a == "--target-score" || a == "--scenario") || objective == Goal::Success {
+        vorax::data::configure_experiment(model.as_deref(), settings, research_target,
+            objective==Goal::Success, scenario).unwrap_or_else(|e| fail(&e));
     }
     match cmd {
         "advise" => advise(&args[1..]),
@@ -58,10 +79,17 @@ fn main() {
         "train" => {
             let a = &args[1..];
             let games = arg(a, "--games").unwrap_or(100_000);
-            if let Some(path) = arg::<String>(a, "--rows") {
-                let seed0 = arg(a, "--seed0").unwrap_or(5_000_000);
-                return train::rows(seed0, seed0 + games, arg(a, "--eps").unwrap_or(0.1), vorax::data().model.is_some(), &path);
+            let chain = a.iter().any(|v| v == "--chain");
+            let synergy = chain || a.iter().any(|v| v == "--synergy");
+            let linear = synergy || a.iter().any(|v| v == "--linear");
+            if let Some(path) = arg::<String>(a, "--probe") {
+                return train::probe(arg(a, "--seed0").unwrap_or(90_000_000), arg(a, "--games").unwrap_or(48), &path, linear, synergy, chain);
             }
+            if let Some(path) = arg::<String>(a, "--rows") {
+                let seed0: u32 = arg(a, "--seed0").unwrap_or(5_000_000);
+                return train::rows(seed0, seed0.checked_add(games).unwrap_or_else(|| fail("training seed range overflow")), arg(a, "--eps").unwrap_or(0.1), vorax::data().model.is_some(), &path, linear, synergy, chain);
+            }
+            if synergy { fail("--synergy requires --rows or --probe; GPU fitting exports the synergy model"); }
             let out: String = arg(a, "--out").unwrap_or_else(|| fail("train: --out model.json (or --rows boards.bin)"));
             train::train(games, arg(a, "--check").unwrap_or((games / 10).max(1000)), arg(a, "--seed0").unwrap_or(5_000_000), arg(a, "--eps").unwrap_or(0.1), vorax::data().model.is_some(), &out)
         }
@@ -79,17 +107,23 @@ fn main() {
 fn info() {
     let d = vorax::data();
     println!("odds {}  ·  {} potions, {} instruments  ·  board value: {}", d.odds, d.potions.len(), d.instruments.len(), match &d.model {
+        Some(vorax::data::ValueModel::Chain { .. }) => "chain v1".into(),
         Some(vorax::data::ValueModel::Rounds { rounds }) => format!("linear, {} rounds × {} weights", rounds.len(), rounds[0].len()),
+        Some(vorax::data::ValueModel::Synergy { legacy_rounds, synergy_rounds, .. }) => format!("synergy v1, {} + {} weights per round", legacy_rounds[0].len(), synergy_rounds[0].len()),
         Some(vorax::data::ValueModel::Trees { trees, .. }) => format!("{} trees", trees.len()),
         None => "none (score)".into(),
     });
 }
 
 fn goal(args: &[String]) -> Goal {
+    if args.iter().any(|a| a == "--goal") && arg::<String>(args,"--goal").is_none() {
+        fail("--goal requires target, mean or success");
+    }
     match arg::<String>(args, "--goal").as_deref().unwrap_or("target") {
         "target" => Goal::Target,
         "mean" => Goal::Mean,
-        _ => fail("--goal must be target or mean"),
+        "success" => Goal::Success,
+        _ => fail("--goal must be target, mean or success"),
     }
 }
 
@@ -151,7 +185,7 @@ fn sim(args: &[String]) {
     let policy: String = arg(args, "--policy").unwrap_or_else(|| "value".into());
     let (chooser, picker) = match policy.as_str() {
         // the player inside the advice's futures
-        "value" => (Chooser::Ev(Policy { samples: 2, horizon: 0, roll_samples: None, steer: None, value: Some(true), goal: Goal::Target }), Picker::Value),
+        "value" => (Chooser::Ev(Policy { samples: 2, horizon: 0, roll_samples: None, steer: None, value: Some(true), goal: goal(args) }), if goal(args) == Goal::Success { Picker::Success } else { Picker::Value }),
         "steer" => (Chooser::Ev(Policy { samples: 4, horizon: 0, roll_samples: None, steer: Some(0.3), value: None, goal: Goal::Target }), Picker::Value),
         // the Solver's own advice at every move: look-ahead potions, board-aware instruments (slow: a full advice per move)
         "solver" => {
@@ -192,7 +226,7 @@ fn sim(args: &[String]) {
     scores.sort();
     let n = scores.len() as f64;
     let mean = scores.iter().sum::<i64>() as f64 / n;
-    let reached = scores.iter().filter(|&&s| s >= TARGET).count() as f64 / n * 100.0;
+    let reached = scores.iter().filter(|&&s| s >= vorax::value::target()).count() as f64 / n * 100.0;
     let rainbow = scores.iter().filter(|&&s| s >= 1_120_000).count() as f64 / n * 100.0;
     println!(
         "{policy}: {games} games in {secs:.1}s ({:.1} games/s)  mean {mean:.0}  median {}  p10 {}  p90 {}  ≥{}k {reached:.1}%  ≥1.12M {rainbow:.1}%",
@@ -200,7 +234,7 @@ fn sim(args: &[String]) {
         scores[scores.len() / 2],
         scores[(n * 0.1) as usize],
         scores[(n * 0.9) as usize],
-        TARGET / 1000
+        vorax::value::target() / 1000
     );
 }
 

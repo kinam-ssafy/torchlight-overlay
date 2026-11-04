@@ -111,11 +111,17 @@ impl Forest {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
 pub enum ValueModel {
+    Chain { chain_version: u32, legacy_rounds: Vec<Vec<f64>>, chain_rounds: Vec<Vec<f64>> },
+    Synergy { synergy_version: u32, legacy_rounds: Vec<Vec<f64>>, synergy_rounds: Vec<Vec<f64>> },
     Rounds { rounds: Vec<Vec<f64>> },
     Trees { base: f64, trees: Vec<Tree> },
 }
 
 pub struct Data {
+    pub reward_target: i64,
+    pub success_objective: bool,
+    /// Controlled research scenario, not a claimed random occurrence rate.
+    pub special_scenario: u8,
     /// Reproduce the frozen MIT traces only; live rules are verified against game transitions.
     pub reference_rules: bool,
     /// the upstream commit the data was exported from
@@ -244,6 +250,7 @@ impl Data {
             potions.push(PotionDef { id: p.id, name: p.name.clone(), rarity: p.rarity, targeting });
         }
 
+        potions.extend(crate::special::definitions());
         let mut instruments = Vec::new();
         for d in &raw.instruments {
             let timing = match d.timing.kind.as_str() {
@@ -286,7 +293,9 @@ impl Data {
 
         let normal_pool: Vec<u8> = potions.iter().filter(|p| p.rarity != PotionRarity::Supreme).map(|p| p.id).collect();
         let box_pool: Vec<u8> = normal_pool.iter().copied().filter(|&id| !matches!(potions[potion_at[id as usize] as usize].targeting, Targeting::Box(_))).collect();
-        let supreme_pool: Vec<u8> = potions.iter().filter(|p| p.rarity == PotionRarity::Supreme).map(|p| p.id).collect();
+        // Incubation is supported when observed, but its random entry frequency is
+        // not calibrated. Never draw a follow-up independently of its parent.
+        let supreme_pool: Vec<u8> = potions.iter().filter(|p| p.rarity == PotionRarity::Supreme && !crate::special::contains(p.id)).map(|p| p.id).collect();
         let basic_pool: Vec<u8> = instruments.iter().filter(|d| d.pool == Pool::Basic).map(|d| d.id).collect();
         let advanced_pool: Vec<u8> = instruments.iter().filter(|d| d.pool == Pool::Advanced).map(|d| d.id).collect();
 
@@ -310,7 +319,27 @@ impl Data {
         let spawn = |r: &str| raw.spawn_rarity.get(r).copied().unwrap_or(0.0);
         let periodic = instruments.iter().filter(|d| matches!(d.timing, Timing::Periodic(_))).map(|d| d.id).collect();
 
+        if let Some(ValueModel::Synergy { synergy_version, legacy_rounds, synergy_rounds }) = &model {
+            let n = instruments.len();
+            let legacy = 31 + n * 13 + n * (n - 1) / 2;
+            let valid = |rows: &Vec<Vec<f64>>, columns| rows.len() == 13
+                && rows.iter().all(|r| r.len() == columns && r.iter().all(|v| v.is_finite()));
+            if *synergy_version != 1 || !valid(legacy_rounds, legacy)
+                || !valid(synergy_rounds, crate::value::synergy_feature_count_for(n)) {
+                return Err("invalid synergy model version, dimensions or coefficients".into());
+            }
+        }
+        if let Some(ValueModel::Chain { chain_version, legacy_rounds, chain_rounds }) = &model {
+            let n = instruments.len();
+            let valid = |rows: &Vec<Vec<f64>>, columns| rows.len() == 13
+                && rows.iter().all(|r| r.len() == columns && r.iter().all(|v| v.is_finite()));
+            if *chain_version != 1 || !valid(legacy_rounds, 31 + n * 13 + n * (n - 1) / 2)
+                || !valid(chain_rounds, crate::value::synergy_feature_count_for(n) + 96) {
+                return Err("invalid chain model version, dimensions or coefficients".into());
+            }
+        }
         Ok(Data {
+            reward_target: crate::value::TARGET, success_objective: false, special_scenario: 0,
             reference_rules: false,
             commit: raw.commit,
             odds: raw.odds,
@@ -397,8 +426,14 @@ pub fn use_model(board_value: Option<&str>) -> Result<(), String> {
 
 /// Explicit CLI experiment settings; the overlay uses the observed rerolls instead.
 pub fn configure(board_value: Option<&str>, settings: Option<Settings>) -> Result<(), String> {
+    configure_experiment(board_value, settings, crate::value::TARGET, false, 0)
+}
+
+pub fn configure_experiment(board_value: Option<&str>, settings: Option<Settings>, target: i64, success: bool, scenario: u8) -> Result<(), String> {
+    if target <= 0 || target > 999_999_999 || scenario > 4 { return Err("invalid research target/scenario".into()); }
     let mut d = Data::parse(EMBEDDED_GAME, Some(board_value.unwrap_or(EMBEDDED_VALUE)))?;
     if let Some(settings) = settings { d.default_settings = settings; }
+    d.reward_target = target; d.success_objective = success; d.special_scenario = scenario;
     DATA.set(d).map_err(|_| "game data already loaded".to_string())
 }
 

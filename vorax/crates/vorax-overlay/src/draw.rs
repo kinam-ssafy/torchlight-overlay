@@ -72,6 +72,13 @@ fn slots(reading: &Reading, size: usize) -> Vec<usize> {
 /// The marks for this advice on this board. `l`: the layout of the screen the overlay covers.
 pub fn plan_for(advice: &Advice, screen: &ScreenState, reading: &Reading, l: &Layout) -> Plan {
     let mut plan = Plan::default();
+    if !advice.unknown.is_empty() {
+        plan.help = true;
+        plan.pill = Some(Pill { main: "카드 효과 지원 필요".into(),
+            sub: format!("{} / 인식은 완료됐지만 추천 계산은 보류합니다", advice.unknown.iter().map(|s| vorax_scan::korean::name(s)).collect::<Vec<_>>().join(", ")),
+            dim: false });
+        return plan;
+    }
     let size = reading.hand_ranks.as_ref().map(|r| r.len()).filter(|&n| n > 0).or(reading.hand_size).unwrap_or(3);
     let at = slots(reading, size);
     let pos = l.hand_at(size);

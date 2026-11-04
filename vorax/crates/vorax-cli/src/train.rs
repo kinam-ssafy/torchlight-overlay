@@ -62,7 +62,9 @@ struct Game {
 /// with a share `eps` of moves played at random so boards a better player reaches are seen too.
 fn play(seed: u32, eps: f64, smart: bool) -> Game {
     let d = data();
-    let chooser = Chooser::Ev(Policy { samples: 2, horizon: 0, roll_samples: None, steer: Some(0.3), value: Some(smart), goal: Goal::Target });
+    let goal = if d.success_objective { Goal::Success } else { Goal::Target };
+    let picker = if d.success_objective { Picker::Success } else { Picker::Value };
+    let chooser = Chooser::Ev(Policy { samples: 2, horizon: 0, roll_samples: None, steer: Some(0.3), value: Some(smart), goal });
     let mut s = create_game(d.default_settings, None, Some(seed));
     let mut rng = Rng::new(mix(seed, 0xbeef));
     let mut boards = Vec::with_capacity(40);
@@ -85,7 +87,7 @@ fn play(seed: u32, eps: f64, smart: bool) -> Game {
                     Pick::Card(rng.int(s.hand.len()))
                 }
             } else {
-                Picker::Value.pick(&s, mix(seed, 5000 + g))
+                picker.pick(&s, mix(seed, 5000 + g))
             };
             s = match pick {
                 Pick::Refresh => dispatch(&s, Action::Refresh),
@@ -107,7 +109,10 @@ fn play(seed: u32, eps: f64, smart: bool) -> Game {
             s = play_opt(&s, &o);
         }
     }
-    Game { boards, y: goal_score(ultimate_activity(&s)) / 1e6 }
+    assert_eq!(s.phase, Phase::GameOver, "training game did not terminate");
+    let score = ultimate_activity(&s);
+    let reward = if d.success_objective { if score >= d.reward_target {d.reward_target as f64} else {0.} } else { goal_score(score) };
+    Game { boards, y: reward / 1e6 }
 }
 
 /// The sums over games `from..to`, per round; games are played on every core, a batch at a time.
@@ -137,9 +142,20 @@ fn gather(from: u32, to: u32, eps: f64, smart: bool, what: &str) -> Vec<Sums> {
     sums
 }
 
-/// Every board of games `from..to` as raw numbers for decision trees (tree_features, then how its game ended), as
-/// little-endian float32 rows in `path`, and `path`.json saying how many columns and rows.
-pub fn rows(from: u32, to: u32, eps: f64, smart: bool, path: &str) {
+fn linear_features(s: &GameState, synergy: bool, chain: bool) -> Vec<f64> {
+    let mut sparse = Vec::new();
+    features(data(), s, &mut sparse);
+    let mut dense = vec![0.0; feature_count(data())];
+    for (i, value) in sparse {
+        dense[i as usize] = value;
+    }
+    if chain { dense.extend(vorax::value::chain_features(data(), s)); }
+    else if synergy { dense.extend(vorax::value::synergy_features(data(), s)); }
+    dense
+}
+
+/// Float32 training rows: tree features + target, or round + linear features + target.
+pub fn rows(from: u32, to: u32, eps: f64, smart: bool, path: &str, linear: bool, synergy: bool, chain: bool) {
     use std::io::Write;
     let d = data();
     let file = std::fs::File::create(path).unwrap_or_else(|e| crate::fail(&format!("{path}: {e}")));
@@ -147,15 +163,20 @@ pub fn rows(from: u32, to: u32, eps: f64, smart: bool, path: &str) {
     let t = Instant::now();
     let (mut n, mut columns) = (0u64, 0usize);
     let mut at = from;
+    // Dense linear rows are much wider; keep the temporary game batch bounded.
+    let batch = if linear { 256 } else { BATCH };
     while at < to {
-        let end = (at + BATCH).min(to);
+        let end = (at + batch).min(to);
         let chunks: Vec<Vec<u8>> = (at..end)
             .into_par_iter()
             .map(|seed| {
                 let g = play(seed, eps, smart);
                 let mut bytes = Vec::new();
                 for b in &g.boards {
-                    for v in tree_features(d, b).into_iter().chain([g.y]) {
+                    let x = if linear {
+                        std::iter::once(b.round as f64).chain(linear_features(b, synergy, chain)).collect()
+                    } else { tree_features(d, b) };
+                    for v in x.into_iter().chain([g.y]) {
                         bytes.extend_from_slice(&(v as f32).to_le_bytes());
                     }
                 }
@@ -163,7 +184,8 @@ pub fn rows(from: u32, to: u32, eps: f64, smart: bool, path: &str) {
             })
             .collect();
         if columns == 0 {
-            columns = tree_features(d, &create_game(d.default_settings, None, Some(1))).len() + 1;
+            columns = if linear { feature_count(d) + 2 + if synergy { vorax::value::synergy_feature_count(d) } else { 0 } + if chain {96} else {0} }
+                else { tree_features(d, &create_game(d.default_settings, None, Some(1))).len() + 1 };
         }
         for c in &chunks {
             out.write_all(c).unwrap_or_else(|e| crate::fail(&format!("{path}: {e}")));
@@ -175,9 +197,30 @@ pub fn rows(from: u32, to: u32, eps: f64, smart: bool, path: &str) {
     }
     eprintln!();
     out.flush().unwrap_or_else(|e| crate::fail(&format!("{path}: {e}")));
-    let meta = serde_json::json!({ "columns": columns, "rows": n, "games": to - from, "seed0": from, "eps": eps });
+    let meta = serde_json::json!({ "columns": columns, "rows": n, "games": to - from, "seed0": from, "eps": eps,
+        "dtype": "float32-le", "target": d.reward_target, "success_objective":d.success_objective, "scenario":d.special_scenario, "potionRefreshes": d.default_settings.potion_refreshes,
+        "instrumentRefreshes": d.default_settings.instrument_refreshes,
+        "features": if chain {"linear-chain-v1"} else if synergy { "linear-synergy-v1" } else if linear { "linear-rounds" } else { "tree" } });
     std::fs::write(format!("{path}.json"), meta.to_string()).unwrap_or_else(|e| crate::fail(&format!("{path}.json: {e}")));
     println!("wrote {path}: {n} boards of {} games, {columns} columns", to - from);
+}
+
+/// Full-precision features and the production CPU prediction for checking an exported GPU model.
+/// The fixed random trajectory is independent of the model being checked.
+pub fn probe(seed0: u32, games: u32, path: &str, linear: bool, synergy: bool, chain: bool) {
+    use std::io::Write;
+    let file = std::fs::File::create(path).unwrap_or_else(|e| crate::fail(&format!("{path}: {e}")));
+    let mut out = std::io::BufWriter::new(file);
+    for seed in seed0..seed0.checked_add(games).unwrap_or_else(|| crate::fail("probe seed range overflow")) {
+        let g = play(seed, 1.0, false);
+        for s in g.boards.iter().filter(|s| s.phase != Phase::GameOver) {
+            let mut row = serde_json::json!({ "seed": seed, "features": if linear { linear_features(s, synergy, chain) } else { tree_features(data(), s) },
+                "prediction": vorax::value::board_value(s) });
+            if linear { row["round"] = serde_json::json!(s.round); }
+            writeln!(out, "{row}").unwrap_or_else(|e| crate::fail(&format!("{path}: {e}")));
+        }
+    }
+    out.flush().unwrap_or_else(|e| crate::fail(&format!("{path}: {e}")));
 }
 
 /// Solves (A + λI) w = b by Cholesky (λ left off the bias); A symmetric positive semi-definite.
@@ -296,6 +339,7 @@ pub fn outcomes(games: u32, seed0: u32, chooser: &Chooser, picker: &Picker) -> V
         .into_par_iter()
         .map(|seed| {
             let end = run_game(seed, chooser, picker, None);
+            assert_eq!(end.phase, Phase::GameOver, "evaluation game did not terminate, seed {seed}");
             let n = done.fetch_add(1, Ordering::Relaxed) + 1;
             if n % step == 0 {
                 let rate = n as f64 / t.elapsed().as_secs_f64();

@@ -46,7 +46,22 @@
   "Xenopanacea: Brood",
   "Xenopanacea",
   "First Rite Holy Water: Confession",
-  "Ritual Holy Water: Flagellation"
+  "Ritual Holy Water: Flagellation",
+  "Incubation Elixir: Hollow Cocoon",
+  "F1 Gen: Parasite Egg",
+  "F1 Gen: Vermin Egg Cluster",
+  "F2 Gen: Parasite Pupae",
+  "F2 Gen: Vermin Pupal Cluster",
+  "F3 Gen: Parasitic Butterfly",
+  "F3 Gen: Emergent Butterfly Swarm",
+  "Incubation Elixir: Hollow Matriarch",
+  "Third Rite Holy Water: Illumination",
+  "Fourth Rite Holy Water: Eucharist",
+  "Dissection Infusion: Morbid Corpse",
+  "Dissection I: Vermectomy",
+  "Dissection II: Daemonectomy",
+  "Dissection III: Craniotomy",
+  "Dissection Infusion: Intact Skeleton"
  ],
  "instrument": [
   "Chrysalis Specimen",

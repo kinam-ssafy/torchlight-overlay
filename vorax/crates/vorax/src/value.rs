@@ -8,18 +8,34 @@ use crate::types::*;
 
 /// The advice's target (bot.ts TARGET): the board value is counted up to it.
 pub const TARGET: i64 = 840_000;
+pub fn target() -> i64 { data().reward_target }
 /// Where the features cap the score: 950,000, the target the shipped model was trained with, kept so it reads
 /// boards as it learned them.
 const FEATURE_CAP: i64 = 950_000;
 
-/// Predicted final score counted up to 840,000; once the game is over, the score itself (up to 840,000).
+/// Predicted terminal reward, capped at the configured research target (legacy default 840k).
 pub fn board_value(s: &GameState) -> f64 {
     let d = data();
     let Some(model) = &d.model else { return ultimate_activity(s) as f64 };
     if s.phase == Phase::GameOver {
-        return ultimate_activity(s).min(TARGET) as f64;
+        let score = ultimate_activity(s);
+        return if d.success_objective { if score >= target() {target() as f64} else {0.0} }
+            else {score.min(target()) as f64};
     }
     let v = match model {
+        ValueModel::Chain { legacy_rounds, chain_rounds, .. } => {
+            let at = s.round.clamp(1, 13) as usize - 1;
+            let mut v = weighted(d, s, &legacy_rounds[at]);
+            visit_synergy(d, s, |i, x| v += chain_rounds[at][i] * x);
+            visit_chain(d, s, |i, x| v += chain_rounds[at][i] * x);
+            v
+        }
+        ValueModel::Synergy { legacy_rounds, synergy_rounds, .. } => {
+            let at = s.round.clamp(1, 13) as usize - 1;
+            let mut v = weighted(d, s, &legacy_rounds[at]);
+            visit_synergy(d, s, |i, x| v += synergy_rounds[at][i] * x);
+            v
+        }
         ValueModel::Rounds { rounds } => {
             let at = (s.round.max(1) as usize).min(rounds.len()) - 1;
             weighted(d, s, &rounds[at])
@@ -44,7 +60,7 @@ pub fn board_value(s: &GameState) -> f64 {
             v
         }
     };
-    (v * 1e6).min(TARGET as f64).max(0.0)
+    (v * 1e6).min(target() as f64).max(0.0)
 }
 
 const PAIRED: usize = 11;
@@ -197,6 +213,94 @@ pub fn features(d: &Data, s: &GameState, out: &mut Vec<(u32, f64)>) {
     }
 }
 
+/// Version 1: joint count/activity/quantity/product, then per-instrument
+/// multiplicity, due/remaining triggers, age and joint-count interactions.
+pub(crate) fn synergy_feature_count_for(instruments: usize) -> usize { 64 + instruments * 20 }
+
+pub fn synergy_feature_count(d: &Data) -> usize { synergy_feature_count_for(d.instruments.len()) }
+
+fn visit_synergy(d: &Data, s: &GameState, mut emit: impl FnMut(usize, f64)) {
+    let mut joint = [[0.0; 16]; 4];
+    for m in s.monsters() {
+        let i = m.archetype as usize * 4 + m.rarity as usize;
+        joint[0][i] += 1.0 / 6.0;
+        joint[1][i] += m.activity as f64 / 1000.0;
+        joint[2][i] += m.quantity as f64 / 3000.0;
+        joint[3][i] += m.total() as f64 / 1e6;
+    }
+    for (block, xs) in joint.iter().enumerate() {
+        for (i, &x) in xs.iter().enumerate() { if x != 0.0 { emit(block * 16 + i, x); } }
+    }
+    let mut owned: crate::stack::StackVec<u16, MAX_EQUIPPED> = crate::stack::StackVec::new();
+    for e in &s.instruments {
+        let i = d.instrument_index[e.id as usize];
+        if i != u16::MAX && !owned.contains(&i) { owned.push(i); }
+    }
+    owned.as_mut_slice().sort();
+    for &i in &owned {
+        let def = &d.instruments[i as usize];
+        let (mut count, mut due, mut remaining, mut age) = (0.0, 0.0, 0.0, 0.0);
+        for e in s.instruments.iter().filter(|e| e.id == def.id) {
+            count += 1.0;
+            age += (s.round - e.acquired_round).max(0) as f64 / 13.0;
+            let ticks = |round: i32| match def.timing {
+                Timing::End => true,
+                Timing::Periodic(every) => every > 0 && round > e.acquired_round && (round - e.acquired_round) % every == 0,
+                Timing::Reactive(_) => false,
+            };
+            due += if ticks(s.round) { 1.0 } else { 0.0 };
+            // Count scheduled ticks arithmetically, without scanning future rounds.
+            let left = match def.timing {
+                Timing::End => (14 - s.round).max(0),
+                Timing::Periodic(every) if every > 0 => {
+                    ((13 - e.acquired_round).max(0) / every
+                        - (s.round - 1 - e.acquired_round).max(0) / every).max(0)
+                }
+                _ => 0,
+            };
+            remaining += left as f64 / 13.0;
+        }
+        if count == 0.0 { continue; }
+        let at = 64 + i as usize * 20;
+        for (k, x) in [count / 3.0, due / 3.0, remaining / 3.0, age / 3.0].into_iter().enumerate() {
+            if x != 0.0 { emit(at + k, x); }
+        }
+        for (k, &x) in joint[0].iter().enumerate() {
+            if x != 0.0 { emit(at + 4 + k, count * x / 3.0); }
+        }
+    }
+}
+
+/// Development export uses the exact same ordered features as CPU inference.
+pub fn synergy_features(d: &Data, s: &GameState) -> Vec<f64> {
+    let mut out = vec![0.0; synergy_feature_count(d)];
+    visit_synergy(d, s, |i, x| out[i] = x);
+    out
+}
+
+/// Upcoming chain identity and board resources must survive the value encoding.
+fn visit_chain(d: &Data, s: &GameState, mut emit: impl FnMut(usize, f64)) {
+    if !(1..=12).contains(&s.special_offer) { return; }
+    let at = synergy_feature_count(d) + (s.special_offer as usize - 1) * 8;
+    let (mut a, mut q, mut pests, mut bones, mut other) = (0., 0., 0., 0., 0.);
+    for m in s.monsters() {
+        a += m.activity as f64 / 1000.; q += m.quantity as f64 / 3000.;
+        pests += f64::from(m.archetype == Archetype::Pest) / 6.;
+        bones += f64::from(m.archetype == Archetype::BoneSentry) / 6.;
+        other += f64::from(m.archetype != Archetype::Aemberon) / 6.;
+    }
+    for (i,x) in [1., (11-s.round).max(0) as f64 / 10., a,q,a*q,pests,bones,other].into_iter().enumerate() {
+        emit(at+i,x);
+    }
+}
+
+pub fn chain_features(d: &Data, s: &GameState) -> Vec<f64> {
+    let mut out = vec![0.; synergy_feature_count(d)+96];
+    visit_synergy(d,s,|i,x| out[i]=x);
+    visit_chain(d,s,|i,x| out[i]=x);
+    out
+}
+
 /// The most raw numbers a board has for decision trees.
 const TREE_MAX: usize = 160;
 
@@ -342,6 +446,106 @@ mod tests {
     use super::*;
     use crate::bot::{options, play_opt, pick_and_confirm};
     use crate::game::{create_game, dispatch};
+
+    #[test]
+    fn chain_encoding_preserves_stage_resources_and_remaining_rounds() {
+        let d = Data::embedded().unwrap();
+        let mut s = GameState { round: 4, special_offer: 5, ..GameState::default() };
+        s.tanks[0] = Some(Monster { archetype: Archetype::Pest, rarity: Rarity::Rare, activity: 200, quantity: 400 });
+        let x = chain_features(&d, &s);
+        assert_eq!(x.len(), synergy_feature_count(&d) + 96);
+        let offset = synergy_feature_count(&d) + 4 * 8;
+        assert_eq!(x[offset], 1.);
+        assert!((x[offset+4] - (200./1000.)*(400./3000.)).abs() < 1e-12);
+        for stage in 1..=12 {
+            s.special_offer = stage;
+            let y = chain_features(&d, &s);
+            assert_eq!(y[synergy_feature_count(&d)+(stage as usize-1)*8],1.);
+            if stage != 5 { assert_ne!(x,y); }
+        }
+        s.special_offer = 5;
+        s.round = 9;
+        assert_ne!(x,chain_features(&d,&s));
+        s.special_offer = 0;
+        assert!(chain_features(&d,&s)[synergy_feature_count(&d)..].iter().all(|v| *v==0.));
+    }
+
+    #[test]
+    fn chain_schema_rejects_wrong_version_and_width() {
+        let d = Data::embedded().unwrap();
+        let game = include_str!("../../../data/game.json");
+        let mut model = serde_json::json!({"chain_version":1,
+            "legacy_rounds":vec![vec![0.;feature_count(&d)];13],
+            "chain_rounds":vec![vec![0.;synergy_feature_count(&d)+96];13]});
+        assert!(Data::parse(game,Some(&model.to_string())).is_ok());
+        model["chain_version"] = 2.into();
+        assert!(Data::parse(game,Some(&model.to_string())).is_err());
+        model["chain_version"] = 1.into();
+        model["chain_rounds"][0].as_array_mut().unwrap().pop();
+        assert!(Data::parse(game,Some(&model.to_string())).is_err());
+    }
+
+    #[test]
+    fn synergy_preserves_joint_types_duplicates_and_clocks() {
+        let d = Data::embedded().unwrap();
+        let m = |archetype, rarity| Some(Monster { archetype, rarity, activity: 100, quantity: 100 });
+        let mut a = GameState { round: 6, ..GameState::default() };
+        a.tanks[0] = m(Archetype::Agito, Rarity::Rare);
+        a.tanks[1] = m(Archetype::Pest, Rarity::Normal);
+        a.instruments.push(Equipped { id: 4, acquired_round: 1 });
+        let mut b = a;
+        b.tanks[0].as_mut().unwrap().rarity = Rarity::Normal;
+        b.tanks[1].as_mut().unwrap().rarity = Rarity::Rare;
+        assert_ne!(synergy_features(&d, &a), synergy_features(&d, &b));
+        b = a;
+        b.instruments.push(Equipped { id: 4, acquired_round: 3 });
+        let at = 64 + d.instrument_index[4] as usize * 20;
+        assert_eq!(synergy_features(&d, &b)[at], 2.0 / 3.0);
+        assert_ne!(synergy_features(&d, &a), synergy_features(&d, &b));
+        a.instruments.clear();
+        a.instruments.push(Equipped { id: 25, acquired_round: 3 });
+        b = a;
+        b.instruments.as_mut_slice()[0].acquired_round = 4;
+        let at = 64 + d.instrument_index[25] as usize * 20;
+        assert_eq!(synergy_features(&d, &a)[at + 1], 1.0 / 3.0);
+        assert_eq!(synergy_features(&d, &b)[at + 1], 0.0);
+        assert_ne!(synergy_features(&d, &a), synergy_features(&d, &b));
+    }
+
+    #[test]
+    fn synergy_tick_counts_match_round_by_round_schedule() {
+        let d = Data::embedded().unwrap();
+        for def in &d.instruments {
+            for acquired in 1..=13 {
+                for round in acquired..=13 {
+                    let mut s = GameState { round, ..GameState::default() };
+                    s.instruments.push(Equipped { id: def.id, acquired_round: acquired });
+                    let expected = (round..=13).filter(|r| match def.timing {
+                        Timing::End => true,
+                        Timing::Periodic(every) => *r > acquired && (*r - acquired) % every == 0,
+                        Timing::Reactive(_) => false,
+                    }).count() as f64 / 13.0 / 3.0;
+                    let at = 64 + d.instrument_index[def.id as usize] as usize * 20;
+                    assert_eq!(synergy_features(&d, &s)[at + 2], expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn synergy_model_rejects_incompatible_schema() {
+        let d = Data::embedded().unwrap();
+        let game = include_str!("../../../data/game.json");
+        let mut model = serde_json::json!({"synergy_version": 1,
+            "legacy_rounds": vec![vec![0.; feature_count(&d)]; 13],
+            "synergy_rounds": vec![vec![0.; synergy_feature_count(&d)]; 13]});
+        assert!(Data::parse(game, Some(&model.to_string())).is_ok());
+        model["synergy_version"] = 2.into();
+        assert!(Data::parse(game, Some(&model.to_string())).is_err());
+        model["synergy_version"] = 1.into();
+        model["synergy_rounds"][0].as_array_mut().unwrap().pop();
+        assert!(Data::parse(game, Some(&model.to_string())).is_err());
+    }
 
     /// The features summed against a round's weights give what `weighted` gives, on boards from whole games.
     #[test]

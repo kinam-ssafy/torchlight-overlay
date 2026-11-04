@@ -11,6 +11,10 @@ use crate::types::*;
 
 /// The potions this port implements: id → (name, targeting). Potion Kits have no effect and aren't listed.
 pub fn potion_port(id: u8) -> Option<(&'static str, Targeting)> {
+    if crate::special::contains(id) {
+        let i = (id - crate::special::COCOON) as usize;
+        return Some((crate::special::NAMES[i], if matches!(i, 1 | 3 | 5) { Select1 } else { Auto }));
+    }
     Some(match id {
         0 => ("Probiotic Enzyme Solution", Auto),
         1 => ("Slough Solution", Select1To2),
@@ -89,6 +93,7 @@ pub fn instrument_port(id: u8) -> Option<&'static str> {
 
 /// A potion's effect on `targets` (empty when it needs none).
 pub fn apply_potion(c: &mut Ctx, id: u8, targets: &[u8]) {
+    if crate::special::contains(id) { return crate::special::apply(c, id, targets); }
     let t0 = targets.first().map(|&t| t as usize);
     // `[t]` destructuring in the TypeScript: the first target's monster, if any
     let first = t0.and_then(|t| c.mon(t).map(|m| (t, m)));

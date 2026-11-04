@@ -110,6 +110,7 @@ fn state_from(v: &Value) -> GameState {
         t8000: v["thresholds"][0].as_bool().unwrap(),
         t28000: v["thresholds"][1].as_bool().unwrap(),
         pending_picks: v["pendingPicks"].as_i64().unwrap() as i32,
+        special_offer: 0,
         rng_state: v["rngState"].as_u64().unwrap() as u32,
         sandbox,
     }

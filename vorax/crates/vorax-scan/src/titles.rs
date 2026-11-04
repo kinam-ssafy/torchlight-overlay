@@ -13,7 +13,7 @@ const MIN_Q: f64 = 6.0;
 const GAP: f64 = 3.0;
 
 fn letters(t: &str) -> Vec<char> {
-    t.to_lowercase().chars().filter(|c| c.is_ascii_lowercase() || crate::korean::hangul(*c)).collect()
+    t.to_lowercase().chars().filter(|c| c.is_ascii_alphanumeric() || crate::korean::hangul(*c)).collect()
 }
 
 /// For each start of p, the fewest edits that match it somewhere inside t.

@@ -5,7 +5,7 @@ use crate::data::data;
 use crate::game::{can_refresh, create_game, dispatch, needs_targets, ultimate_activity};
 use crate::stack::StackVec;
 use crate::types::*;
-use crate::value::{board_value, TARGET};
+use crate::value::{board_value, target};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -288,6 +288,7 @@ pub enum Pick {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Picker {
+    Success,
     /// by the board value: the offered instrument whose board is worth most, or a reroll when none beats the board
     Value,
     /// Uncapped continuation policy used inside mean-score futures.
@@ -305,11 +306,11 @@ pub fn value_pick(s: &GameState) -> Pick {
 /// Keep the learned early-game prior, but do not flatten boards above its target.
 /// This is a rollout heuristic, not a newly trained uncapped value model.
 fn continuation_value(s: &GameState, goal: Goal) -> f64 {
-    if goal == Goal::Target {
+    if goal != Goal::Mean {
         return board_value(s);
     }
     let ua = ultimate_activity(s) as f64;
-    if s.phase == Phase::GameOver || ua >= TARGET as f64 {
+    if s.phase == Phase::GameOver || ua >= target() as f64 {
         return ua;
     }
     board_value(s).max(ua)
@@ -336,6 +337,7 @@ impl Picker {
     pub fn pick(&self, s: &GameState, seed: u32) -> Pick {
         match self {
             Picker::Value => value_pick(s),
+            Picker::Success => value_pick_for(s, Goal::Success),
             Picker::Mean => value_pick_for(s, Goal::Mean),
             Picker::Board { playouts, rollout, goal, refresh_playouts } => {
                 let r = rank_instruments(s, seed, *playouts, &Chooser::Ev(*rollout), *goal, *refresh_playouts, false);
@@ -371,9 +373,10 @@ fn real_end(s: &GameState, seed: u32) -> f64 {
     goal_score(ultimate_activity(&finish(s, seed, &inner, &Picker::Value)))
 }
 
-/// The score the advice aims for: 840,000 on the board, which the endgame battle bonus takes to rainbow.
+/// Capped preparation score. The legacy 840k target does not guarantee a loot tier;
+/// combat bonuses and the current reward thresholds are separate assumptions.
 pub fn goal_score(ua: i64) -> f64 {
-    ua.min(TARGET) as f64
+    ua.min(target()) as f64
 }
 
 /// What an instrument choice is judged by: the score counted up to TARGET, or the plain average final score.
@@ -383,15 +386,17 @@ pub enum Goal {
     #[default]
     Target,
     Mean,
+    Success,
 }
 
 impl Goal {
     pub fn is_target(&self) -> bool { *self == Goal::Target }
     fn score(self, ua: i64) -> f64 {
-        if self == Goal::Target { goal_score(ua) } else { ua as f64 }
+        match self { Goal::Target => goal_score(ua), Goal::Mean => ua as f64,
+            Goal::Success => if ua >= target() {target() as f64} else {0.0} }
     }
     fn picker(self) -> Picker {
-        if self == Goal::Target { Picker::Value } else { Picker::Mean }
+        match self { Goal::Target => Picker::Value, Goal::Mean => Picker::Mean, Goal::Success => Picker::Success }
     }
 }
 
@@ -411,7 +416,7 @@ pub struct Tally {
 impl Tally {
     fn ending(s: &GameState, goal: Goal) -> Self {
         let ua = ultimate_activity(s);
-        Self { goal: goal.score(ua), reached: (ua >= TARGET) as u32, n: 1,
+        Self { goal: goal.score(ua), reached: (ua >= target()) as u32, n: 1,
             monsters: s.monsters().map(|m| m.quantity as f64).sum(), groups: s.monsters().count() as f64 }
     }
 
@@ -420,7 +425,7 @@ impl Tally {
         let (a,b)=(self.n.max(1) as f64,other.n.max(1) as f64);
         let cmp = |x:f64,y:f64| x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal);
         cmp(self.goal/a,other.goal/b).then_with(|| {
-            if goal != Goal::Target || data().reference_rules { return std::cmp::Ordering::Equal; }
+            if goal == Goal::Mean || data().reference_rules { return std::cmp::Ordering::Equal; }
             cmp(self.reached as f64/a,other.reached as f64/b)
                 .then_with(||cmp(other.monsters/b,self.monsters/a))
                 .then_with(||cmp(other.groups/b,self.groups/a))
