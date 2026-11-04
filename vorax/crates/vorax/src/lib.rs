@@ -11,6 +11,7 @@ pub mod effects;
 pub mod game;
 pub mod rng;
 pub mod stack;
+pub mod special;
 pub mod types;
 pub mod value;
 

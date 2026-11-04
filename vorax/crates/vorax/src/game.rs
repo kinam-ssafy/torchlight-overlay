@@ -195,8 +195,19 @@ fn begin_round(d: &Data, s: &mut GameState, rng: &mut Rng) {
             }
             h
         }
+        None if crate::special::replaces(s.special_offer) => Hand::new(),
         None => deal_potions(d, rng, 3, false),
     };
+    if s.special_offer > 0 {
+        let ordinary = s.hand;
+        s.hand.clear();
+        for &id in crate::special::offer(s.special_offer) { s.hand.push(Card { kind: CardKind::Potion, id }); }
+        for &card in &ordinary { if s.hand.len() < MAX_HAND { s.hand.push(card); } }
+    }
+    if s.round == 2 && s.special_offer == 0 && d.special_scenario > 0 {
+        let id = [42, 50, 54, 59][d.special_scenario as usize - 1];
+        s.hand.as_mut_slice()[0] = Card { kind: CardKind::Potion, id };
+    }
 }
 
 fn end_round(d: &'static Data, s: &mut GameState, rng: &mut Rng) {
@@ -262,12 +273,15 @@ fn confirm(d: &'static Data, s: &mut GameState, rng: &mut Rng) {
     }
     s.open_box = None;
     clear_selection(s);
+    s.special_offer = crate::special::next(card.id, &s.tanks);
     end_round(d, s, rng);
 }
 
 fn refresh(d: &Data, s: &mut GameState, rng: &mut Rng) {
     if s.phase == Phase::PotionSelect {
         s.potion_refreshes -= 1;
+        // Observed: rerolling discards the Gen cards as well as ordinary cards.
+        s.special_offer = 0;
         let kit = s.open_box.map(|id| d.potion(id).targeting);
         s.hand = match kit {
             Some(Targeting::Box(n)) => deal_potions(d, rng, n as usize, true),
@@ -290,6 +304,7 @@ pub fn card_changes(state: &GameState, index: usize, targets: &[u8]) -> bool {
     if matches!(d.potion(card.id).targeting, Targeting::Box(_)) {
         return true;
     }
+    if crate::special::contains(card.id) { return true; }
     if effects::potion_port(card.id).is_none() {
         return false;
     }

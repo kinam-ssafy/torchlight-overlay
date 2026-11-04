@@ -1,8 +1,7 @@
-//! The Holy Water rites (upstream's tests/strategy/advisor.test.ts, issue #13): Supreme potions whose effect is
-//! another card later, always the advice like a Xenopanacea. Upstream's traces don't offer one, so these check it.
+//! Known rites are evaluated as a chain, not unconditionally selected by their name.
 
 use serde_json::json;
-use vorax::advisor::{self, Best, ScreenState};
+use vorax::advisor::{self, ScreenState};
 
 /// The recorded traces were made with tli-vorax-simulator's linear board value (7b4c9ba), not the trees the program
 /// ships: every test plays with that one.
@@ -17,11 +16,11 @@ fn board(hand: &[&str]) -> ScreenState {
 }
 
 #[test]
-fn a_rite_is_always_the_advice() {
+fn a_late_rite_is_evaluated_alongside_immediate_effects() {
     linear_board_value();
     let a = advisor::advise(&board(&["Mutagenic Powder", "Bewitching Tincture", "First Rite Holy Water: Confession"]), 2, false, false);
-    assert!(matches!(&a.best, Best::Card(r) if r.index == 2), "{:?}", a.best);
-    assert!(a.note.as_deref().is_some_and(|n| n.starts_with("First Rite Holy Water: Confession: always take it")), "{:?}", a.note);
+    assert!(!a.ranking.is_empty());
+    assert!(!a.note.as_deref().is_some_and(|n| n.contains("always take it")), "{:?}", a.note);
     assert!(a.unknown.is_empty());
 }
 
@@ -29,6 +28,6 @@ fn a_rite_is_always_the_advice() {
 fn purest_holy_water_is_simulated() {
     linear_board_value();
     assert!(!advisor::is_always_take("Purest Holy Water"));
-    assert!(advisor::is_always_take("Ritual Holy Water: Flagellation"));
-    assert!(advisor::is_always_take("Xenopanacea: Brood"));
+    assert!(!advisor::is_always_take("Ritual Holy Water: Flagellation"));
+    assert!(!advisor::is_always_take("Xenopanacea: Brood"));
 }

@@ -186,6 +186,13 @@ of the options round by round) reached 840k in 80.1% of 1,440 games against 81.6
 
 ## Tests
 
+Development-only GPU model fitting, CPU export checks and paired CPU simulation gates are documented in
+[GPU model search](../docs/GPU-MODEL-SEARCH.md). CUDA/XGBoost are not dependencies of the portable overlay.
+For repeated game generation with each newly learned CPU policy, see
+[GPU Monte Carlo policy iteration](../docs/GPU-RL.md). This development experiment never promotes a model automatically.
+For joint archetype/rarity, duplicate instruments and trigger clocks with a fixed 4,096-game holdout, see
+[GPU synergy model](../docs/GPU-SYNERGY.md). The new model format requires the new CPU reader; the shipped model stays unchanged.
+
 `cargo test --release --workspace` replays recorded traces, so a change can't make the engine, Solver or reader
 play differently by accident:
 

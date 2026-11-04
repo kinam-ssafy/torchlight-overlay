@@ -1,0 +1,101 @@
+{
+  "source": "https://tlidb.com/ko/Hyperlink",
+  "observed": "2026-11-04",
+  "cards": [
+    {
+      "name": "Incubation Elixir: Hollow Cocoon",
+      "ko": "부화 영약: 공심 고치",
+      "family": "incubation"
+    },
+    {
+      "name": "F1 Gen: Parasite Egg",
+      "ko": "Gen 1: 기생충 알",
+      "family": "incubation"
+    },
+    {
+      "name": "F1 Gen: Vermin Egg Cluster",
+      "ko": "Gen 1: 곤충 군집",
+      "family": "incubation"
+    },
+    {
+      "name": "F2 Gen: Parasite Pupae",
+      "ko": "Gen 2: 기생충 번데기",
+      "family": "incubation"
+    },
+    {
+      "name": "F2 Gen: Vermin Pupal Cluster",
+      "ko": "Gen 2: 번데기 군집",
+      "family": "incubation"
+    },
+    {
+      "name": "F3 Gen: Parasitic Butterfly",
+      "ko": "Gen 3: 기생나비",
+      "family": "incubation"
+    },
+    {
+      "name": "F3 Gen: Emergent Butterfly Swarm",
+      "ko": "Gen 3: 우화 나비떼",
+      "family": "incubation"
+    },
+    {
+      "name": "Incubation Elixir: Hollow Matriarch",
+      "ko": "부화 영약: 공심 여왕벌레",
+      "family": "incubation"
+    },
+    {
+      "name": "First Rite Holy Water: Confession",
+      "ko": "제1의식 성수: 고해",
+      "family": "holy-water"
+    },
+    {
+      "name": "Ritual Holy Water: Flagellation",
+      "ko": "제2의식 성수: 태형",
+      "family": "holy-water"
+    },
+    {
+      "name": "Third Rite Holy Water: Illumination",
+      "ko": "제3의식 성수: 계몽",
+      "family": "holy-water"
+    },
+    {
+      "name": "Fourth Rite Holy Water: Eucharist",
+      "ko": "제4의식 성수: 성찬",
+      "family": "holy-water"
+    },
+    {
+      "name": "Dissection Infusion: Morbid Corpse",
+      "ko": "해부 침지액: 병든 시체",
+      "family": "dissection"
+    },
+    {
+      "name": "Dissection I: Vermectomy",
+      "ko": "해부술I: 살충술",
+      "family": "dissection"
+    },
+    {
+      "name": "Dissection II: Daemonectomy",
+      "ko": "해부술II: 퇴마술",
+      "family": "dissection"
+    },
+    {
+      "name": "Dissection III: Craniotomy",
+      "ko": "해부술III: 개두술",
+      "family": "dissection"
+    },
+    {
+      "name": "Dissection Infusion: Intact Skeleton",
+      "ko": "해부 침지액: 온전한 골격",
+      "family": "dissection"
+    },
+    {
+      "name": "Xenopanacea: Osteotrophy",
+      "ko": "이종 만능약: 골격 강화",
+      "family": "xenopanacea"
+    },
+    {
+      "name": "Xenopanacea: Brood",
+      "ko": "이종 만능약: 육성",
+      "family": "xenopanacea"
+    }
+  ]
+}

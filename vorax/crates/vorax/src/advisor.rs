@@ -135,11 +135,10 @@ pub fn is_xenopanacea(name: &str) -> bool {
     name.trim().to_lowercase().starts_with("xenopanacea")
 }
 
-/// A Supreme potion the simulator can't play out, always the advice when offered: a Xenopanacea (its card prints
-/// only flavour text) or a Holy Water rite ("… Holy Water: …", whose effect is another card later; Purest Holy
-/// Water, with no colon, is simulated).
-pub fn is_always_take(name: &str) -> bool {
-    is_xenopanacea(name) || name.to_lowercase().contains("holy water:")
+/// Kept for callers of the original advisor API. Unknown effects must hold advice;
+/// a familiar family name alone is not evidence that a card is always beneficial.
+pub fn is_always_take(_name: &str) -> bool {
+    false
 }
 
 fn lookup(phase_potion: bool, name: &str) -> Option<u8> {
@@ -190,6 +189,7 @@ pub fn to_state(x: &ScreenState, unknown: &mut Vec<String>) -> GameState {
     let score: i64 = tanks.iter().flatten().map(Monster::total).sum();
     let unlocked = if reward_offer { had.max(1 + crate::game::THRESHOLDS.into_iter().filter(|&t| score >= t).count()) } else { had };
     let pending = if reward_offer { unlocked.saturating_sub(equipped.len()) as i32 } else { s.pending_picks };
+    let special_offer = crate::special::stage(&hand);
     GameState {
         tanks,
         instruments: equipped,
@@ -206,6 +206,7 @@ pub fn to_state(x: &ScreenState, unknown: &mut Vec<String>) -> GameState {
         t8000: unlocked >= 2,
         t28000: unlocked >= 3,
         pending_picks: pending,
+        special_offer,
         ..s
     }
 }
@@ -270,6 +271,13 @@ pub fn prepare_for_goal(x: &ScreenState, futures: Option<u32>, goal: Goal) -> Pr
         }
     }
     let s = to_state(x, &mut unknown);
+    // Recognizing a title does not mean its effect is implemented. Dropping an
+    // unknown choice silently would rank a different hand from the one shown.
+    if !unknown.is_empty() {
+        return Prepared::Done(Advice { goal, best: Best::Nothing, ranking: vec![], board: ultimate_activity(&s),
+            refresh_end: None, plan: false, final_: true, ms: t0.elapsed().as_millis() as u64,
+            unknown, note: Some("Unsupported card effect; recommendation withheld.".into()) });
+    }
     let work = if s.phase == Phase::PotionSelect {
         let n = futures.unwrap_or(LOOK_AHEAD.playouts);
         Work::Potion { s, seed: SEED, la: LookAhead { playouts: n, goal, ..LOOK_AHEAD }, opts: shortlist(&s, SEED, &LOOK_AHEAD), futures: n }
@@ -450,6 +458,11 @@ pub fn advise(x: &ScreenState, samples: u32, plan: bool, par: bool) -> Advice {
     let mut unknown = Vec::new();
     let s = to_state(x, &mut unknown);
     let p = Policy::new(samples, 0);
+    if !unknown.is_empty() {
+        return Advice { goal: Goal::Target, best: Best::Nothing, ranking: vec![], board: ultimate_activity(&s),
+            refresh_end: None, plan: false, final_: true, ms: t0.elapsed().as_millis() as u64,
+            unknown, note: Some("Unsupported card effect; recommendation withheld.".into()) };
+    }
     let mut ranked: Vec<Ranked> = options(&s).iter().map(|o| to_ranked(o, js_round(expected(&s, o, &p, SEED, 0)))).collect();
     ranked.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap_or(std::cmp::Ordering::Equal));
     let ranking = mark_no_effect(&s, break_ties(&s, ranked, SEED));

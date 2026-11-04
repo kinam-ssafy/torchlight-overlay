@@ -140,6 +140,8 @@ pub struct GameState {
     pub t8000: bool,
     pub t28000: bool,
     pub pending_picks: i32,
+    /// Incubation offer stage; carried through intervening instrument choices.
+    pub special_offer: u8,
     pub rng_state: u32,
     pub sandbox: Option<Sandbox>,
 }
